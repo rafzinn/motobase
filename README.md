@@ -145,4 +145,6 @@ Respira. `docker service ls` mostra o que está de pé. No Portainer dá pra rei
 
 **🦀 Feito. Agora fala com a IA e constrói em cima.**
 
+**Rafael Ventura** · [GitHub](https://github.com/rafzinn) · [email@rafaelventura.com.br](mailto:email@rafaelventura.com.br) · [LinkedIn](https://www.linkedin.com/in/rafzinn)
+
 </div>
