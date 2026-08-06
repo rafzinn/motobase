@@ -12,6 +12,14 @@ Write-Host ""
 Write-Host "  MOTOBASE - preparando seu computador (Node.js LTS)" -ForegroundColor Yellow
 Write-Host ""
 
+# destrava a politica de execucao (o Windows vem travado e bloquearia o npm)
+try {
+  if ((Get-ExecutionPolicy -Scope CurrentUser) -in @('Restricted','Undefined','AllSigned')) {
+    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+    Write-Host "  Politica de scripts liberada pro seu usuario (RemoteSigned)." -ForegroundColor Gray
+  }
+} catch {}
+
 # ja tem?
 if (Get-Command node -ErrorAction SilentlyContinue) {
   Write-Host "  Node ja instalado: $(node -v) - nada a fazer." -ForegroundColor Green
