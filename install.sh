@@ -2,7 +2,7 @@
 # =============================================================================
 #  🦀 MOTOBASE — sua VPS de produção em uma linha
 #
-#  bash <(curl -fsSL https://raw.githubusercontent.com/rafzinn/motobase/main/install.sh)
+#  bash <(curl -fsSL https://get.motobot.com.br)
 #
 #  Sobe a MESMA fundação que roda o Motobot em produção:
 #    Docker Swarm → Traefik (HTTPS automático) → Portainer → stacks à escolha

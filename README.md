@@ -8,10 +8,10 @@ A mesma fundação que roda um sistema real de delivery em produção,
 instalada e configurada sozinha, com HTTPS de verdade e painel visual.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/rafzinn/motobase/main/install.sh)
+bash <(curl -fsSL https://get.motobot.com.br)
 ```
 
-*por [Rafael Ventura](https://github.com/rafzinn) × Fable 5*
+*por [Rafael Ventura](https://github.com/rafzinn) × Fable 5 · [a trilha completa →](MODULOS.md)*
 
 </div>
 
@@ -71,7 +71,7 @@ Confirme com `yes`, cole a senha de root (ela não aparece ao digitar — é nor
 ### Passo 4 — A linha
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/rafzinn/motobase/main/install.sh)
+bash <(curl -fsSL https://get.motobot.com.br)
 ```
 
 O instalador conversa com você em português: pergunta seu domínio, seu e-mail,
@@ -103,6 +103,18 @@ senhas são **geradas fortes** e salvas em `/root/motobase-credenciais.txt`.
 Regras de ouro que o instalador imprime no final (aprendidas em produção real):
 nunca `docker restart` em serviço do Swarm (use `docker service update --force`),
 nuvem laranja só depois do cadeado, backup não é opcional.
+
+## Módulo 2 — Blindagem (firewall, SSH, fail2ban, backup R2, auto-commit)
+
+Servidor no ar é metade do jogo; a outra metade é não perder ele. Uma linha:
+
+```bash
+bash <(curl -fsSL https://get.motobot.com.br/guard)
+```
+
+Firewall fechado, SSH só por chave, fail2ban, updates automáticos, swap,
+**backup diário no Cloudflare R2 (grátis)** e **auto-commit assinado pro seu
+GitHub privado**. Detalhes na [trilha](MODULOS.md).
 
 ## O que este repositório NÃO é
 
