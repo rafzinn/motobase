@@ -76,10 +76,13 @@ preflight(){
 questionario(){
   say "\n${BOLD}[1/9] Questionário${C0} — responde tudo agora e vai tomar um café.\n"
 
-  ask PROJ_NAME "Nome do projeto/startup"
-  [[ -n "${PROJ_NAME}" ]] || die "Preciso de um nome."
-  SLUG=$(echo "$PROJ_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
-  [[ -n "$SLUG" ]] || die "Nome precisa ter letras ou números."
+  while true; do
+    ask PROJ_NAME "Nome do projeto/startup"
+    SLUG=$(echo "${PROJ_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+    # nome de schema/serviço precisa começar com LETRA (Postgres recusa começar por número)
+    [[ "$SLUG" =~ ^[a-z] ]] && break
+    warn "O nome precisa ter letras (ex: 'Somos Um', 'minha startup') — só números não dá pra nomear banco e serviços."
+  done
   info "identificador técnico: ${BOLD}${SLUG}${C0} (banco, stacks, secrets)"
 
   say ""
