@@ -6,7 +6,8 @@
 #
 #  Sobe a fundação completa do Somos Um numa VPS zerada:
 #    Docker Swarm → Traefik (HTTPS automático) → Postgres+pgvector → Redis
-#    → schema do banco aplicado → terreno pronto pra aplicação (API + bot).
+#    → schema do banco aplicado → Tailscale + Portainer só-tailnet (gestão)
+#    → terreno pronto pra aplicação (API + bot).
 #  Senhas fortes geradas na hora, guardadas como Docker secrets.
 #
 #  Por Rafael Ventura (github.com/rafzinn) × Fable 5.
@@ -59,7 +60,7 @@ preflight(){
 
 # ── etapa 1: docker + swarm ──────────────────────────────────────────────────
 docker_swarm(){
-  say "\n${BOLD}[1/6] Docker + Swarm${C0}"
+  say "\n${BOLD}[1/7] Docker + Swarm${C0}"
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     run "curl -fsSL https://get.docker.com | sh >/dev/null 2>&1"
@@ -75,7 +76,7 @@ docker_swarm(){
 
 # ── etapa 2: domínio ─────────────────────────────────────────────────────────
 domain_step(){
-  say "\n${BOLD}[2/6] Domínio${C0}"
+  say "\n${BOLD}[2/7] Domínio${C0}"
   say ""
   say "  ${AMB}┌─────────────────────────  ANTES DE CONTINUAR  ─────────────────────────┐${C0}"
   say "  ${AMB}│${C0} No painel do seu DNS (Cloudflare etc.), crie um registro tipo ${BOLD}A${C0}       ${AMB}│${C0}"
@@ -97,7 +98,7 @@ domain_step(){
 
 # ── etapa 3: traefik ─────────────────────────────────────────────────────────
 traefik_stack(){
-  say "\n${BOLD}[3/6] Traefik — o porteiro HTTPS${C0}"
+  say "\n${BOLD}[3/7] Traefik — o porteiro HTTPS${C0}"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
     ok "Traefik já existe neste Swarm — mantendo o que está no ar"
     return
@@ -121,14 +122,18 @@ services:
       - --certificatesresolvers.le.acme.storage=/acme.json
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
     ports:
-      - "80:80"
-      - "443:443"
+      # host mode: Traefik enxerga o IP REAL do cliente (sem isso, allowlist de IP não funciona)
+      - { target: 80, published: 80, mode: host }
+      - { target: 443, published: 443, mode: host }
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/traefik/acme.json:/acme.json
     networks: [web]
     deploy:
       placement: { constraints: [node.role == manager] }
+      labels:
+        # middleware pronto pra rotas de gestão: só tailnet (100.64/10) e localhost passam
+        - traefik.http.middlewares.tailnet-only.ipwhitelist.sourcerange=127.0.0.1/32,100.64.0.0/10
 networks:
   web: { external: true }
 EOF
@@ -138,7 +143,7 @@ EOF
 
 # ── etapa 4: banco + redis (com secrets) ─────────────────────────────────────
 dados_stack(){
-  say "\n${BOLD}[4/6] Dados — Postgres+pgvector e Redis${C0}"
+  say "\n${BOLD}[4/7] Dados — Postgres+pgvector e Redis${C0}"
   local PGP; PGP=$(pw)
   if ! docker secret inspect somosum_pg_password >/dev/null 2>&1; then
     run "printf '%s' '${PGP}' | docker secret create somosum_pg_password - >/dev/null"
@@ -322,9 +327,97 @@ EOSQL
   ok "Schema ${BOLD}somosum${C0} aplicado (10 tabelas + pgvector)"
 }
 
-# ── etapa 5: segredos da aplicação ───────────────────────────────────────────
+# ── etapa 5: tailscale + gestão só-tailnet ───────────────────────────────────
+tailscale_gestao(){
+  say "\n${BOLD}[5/7] Tailscale — gestão fora da internet pública${C0}"
+  info "Portainer (e futuras telas de admin) só vão abrir com o Tailscale ligado no SEU dispositivo."
+  if ! command -v tailscale >/dev/null; then
+    info "instalando Tailscale (script oficial)…"
+    run "curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1"
+  fi
+  ask TSKEY "Auth key do Tailscale (tskey-…; Enter pra logar por link no navegador)" ""
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "  ${DIM}[dry-run] tailscale up${TSKEY:+ --authkey=***}${C0}"; TSIP="100.x.y.z"
+  else
+    if [[ -n "$TSKEY" ]]; then tailscale up --authkey="$TSKEY"
+    else
+      say "  ${AMB}→ Abra o link que vai aparecer abaixo e autorize este servidor na sua tailnet:${C0}"
+      tailscale up
+    fi
+    TSIP=$(tailscale ip -4 2>/dev/null | head -1)
+    [[ -n "$TSIP" ]] || die "Tailscale não subiu — rode 'tailscale up' manualmente e repita."
+  fi
+  ok "Servidor na tailnet: ${BOLD}${TSIP}${C0}"
+
+  # Portainer: publicado APENAS na porta 9000 host-mode, travado no firewall pra tailnet
+  mkdir -p "${D}/opt/somosum" "${D}/usr/local/sbin" "${D}/etc/systemd/system"
+  cat > "${D}/opt/somosum/portainer.yml" <<'EOF'
+version: "3.8"
+services:
+  agent:
+    image: portainer/agent:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks: [agent]
+    deploy: { mode: global }
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    volumes: [pdata:/data]
+    networks: [agent]
+    ports:
+      - { target: 9000, published: 9000, mode: host }
+    deploy:
+      placement: { constraints: [node.role == manager] }
+networks:
+  agent: { driver: overlay, attachable: true }
+volumes:
+  pdata:
+EOF
+  run "docker stack deploy -c /opt/somosum/portainer.yml portainer >/dev/null"
+
+  # LIÇÃO (Motobot 2026-08-02): porta publicada pelo Docker IGNORA o ufw.
+  # O trinco de verdade é na chain DOCKER-USER — e precisa sobreviver a reboot.
+  cat > "${D}/usr/local/sbin/somosum-lockdown.sh" <<'EOF'
+#!/usr/bin/env bash
+# Trava portas de GESTÃO pra aceitarem só tailnet (100.64/10) e localhost.
+set -e
+PORTS="9000"
+iptables -N SOMOSUM-GESTAO 2>/dev/null || true
+iptables -F SOMOSUM-GESTAO
+for p in $PORTS; do
+  iptables -A SOMOSUM-GESTAO -p tcp --dport "$p" -s 100.64.0.0/10 -j RETURN
+  iptables -A SOMOSUM-GESTAO -p tcp --dport "$p" -s 127.0.0.0/8    -j RETURN
+  iptables -A SOMOSUM-GESTAO -p tcp --dport "$p" -j DROP
+done
+iptables -C DOCKER-USER -j SOMOSUM-GESTAO 2>/dev/null || iptables -I DOCKER-USER 1 -j SOMOSUM-GESTAO
+EOF
+  chmod +x "${D}/usr/local/sbin/somosum-lockdown.sh"
+  cat > "${D}/etc/systemd/system/somosum-lockdown.service" <<'EOF'
+[Unit]
+Description=Somos Um - trava portas de gestao pra tailnet
+After=docker.service tailscaled.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/somosum-lockdown.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  run "systemctl daemon-reload && systemctl enable --now somosum-lockdown.service >/dev/null 2>&1"
+  ok "Portainer: ${BOLD}http://${TSIP}:9000${C0} ${DIM}(SÓ com Tailscale ligado; crie o admin no 1º acesso — expira em 5min)${C0}"
+  info "do IP público, a porta 9000 simplesmente não responde (DROP na DOCKER-USER, persistente)"
+  cred ""; cred "Portainer (gestão, só-tailnet): http://${TSIP}:9000"
+  cred "IP tailnet do servidor: ${TSIP}"
+}
+
+# ── etapa 6: segredos da aplicação ───────────────────────────────────────────
 app_secrets(){
-  say "\n${BOLD}[5/6] Segredos da aplicação${C0} ${DIM}(Enter pra pular e cadastrar depois)${C0}"
+  say "\n${BOLD}[6/7] Segredos da aplicação${C0} ${DIM}(Enter pra pular e cadastrar depois)${C0}"
   ask TGTOK "Token do bot do Telegram (do @BotFather)" ""
   if [[ -n "$TGTOK" ]] && ! docker secret inspect somosum_tg_token >/dev/null 2>&1; then
     run "printf '%s' '${TGTOK}' | docker secret create somosum_tg_token - >/dev/null"
@@ -362,6 +455,15 @@ services:
         - traefik.http.routers.somosum.entrypoints=websecure
         - traefik.http.routers.somosum.tls.certresolver=le
         - traefik.http.services.somosum.loadbalancer.server.port=3000
+        # ── rota de ADMIN MASTER (descomentar quando existir /admin na API) ──
+        # Só-tailnet via middleware definido no Traefik. priority=2000 OBRIGATÓRIO
+        # se algum dia houver router com PathPrefix genérico (lição Motobot 08-02).
+        # - traefik.http.routers.somosum-adm.rule=Host(\`${APP_DOMAIN}\`) && PathPrefix(\`/admin\`)
+        # - traefik.http.routers.somosum-adm.entrypoints=websecure
+        # - traefik.http.routers.somosum-adm.tls.certresolver=le
+        # - traefik.http.routers.somosum-adm.middlewares=tailnet-only
+        # - traefik.http.routers.somosum-adm.priority=2000
+        # - traefik.http.routers.somosum-adm.service=somosum
 networks:
   somosum_internal: { external: true }
   web: { external: true }
@@ -376,7 +478,7 @@ EOF
 
 # ── etapa 6: backup ──────────────────────────────────────────────────────────
 backup_cron(){
-  say "\n${BOLD}[6/6] Backup do banco — desde o dia um${C0}"
+  say "\n${BOLD}[7/7] Backup do banco — desde o dia um${C0}"
   mkdir -p "${D}/var/backups/somosum" "${D}/opt/somosum"
   cat > "${D}/opt/somosum/backup.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -403,6 +505,7 @@ EOF
 resumo(){
   say "\n${GRN}${BOLD}═══ Fundação do Somos Um pronta ═══${C0}\n"
   say "  Plataforma:  ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a API subir)${C0}"
+  say "  Gestão:      ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — SÓ com Tailscale ligado)${C0}"
   say "  Banco:       somosum_postgres (schema somosum, 10 tabelas, pgvector)"
   say "  Fila/sessão: somosum_redis"
   say "  Credenciais: ${BOLD}/root/somosum-credenciais.txt${C0} ${DIM}(chmod 600 — anote e apague)${C0}"
@@ -423,6 +526,7 @@ domain_step
 traefik_stack
 dados_stack
 schema_ddl
+tailscale_gestao
 app_secrets
 backup_cron
 resumo
