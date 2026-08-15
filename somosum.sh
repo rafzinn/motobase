@@ -60,7 +60,7 @@ preflight(){
 
 # ── etapa 1: docker + swarm ──────────────────────────────────────────────────
 docker_swarm(){
-  say "\n${BOLD}[1/7] Docker + Swarm${C0}"
+  say "\n${BOLD}[1/8] Docker + Swarm${C0}"
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     run "curl -fsSL https://get.docker.com | sh >/dev/null 2>&1"
@@ -76,7 +76,7 @@ docker_swarm(){
 
 # ── etapa 2: domínio ─────────────────────────────────────────────────────────
 domain_step(){
-  say "\n${BOLD}[2/7] Domínio${C0}"
+  say "\n${BOLD}[2/8] Domínio${C0}"
   say ""
   say "  ${AMB}┌─────────────────────────  ANTES DE CONTINUAR  ─────────────────────────┐${C0}"
   say "  ${AMB}│${C0} No painel do seu DNS (Cloudflare etc.), crie um registro tipo ${BOLD}A${C0}       ${AMB}│${C0}"
@@ -98,7 +98,7 @@ domain_step(){
 
 # ── etapa 3: traefik ─────────────────────────────────────────────────────────
 traefik_stack(){
-  say "\n${BOLD}[3/7] Traefik — o porteiro HTTPS${C0}"
+  say "\n${BOLD}[3/8] Traefik — o porteiro HTTPS${C0}"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
     ok "Traefik já existe neste Swarm — mantendo o que está no ar"
     return
@@ -143,7 +143,7 @@ EOF
 
 # ── etapa 4: banco + redis (com secrets) ─────────────────────────────────────
 dados_stack(){
-  say "\n${BOLD}[4/7] Dados — Postgres+pgvector e Redis${C0}"
+  say "\n${BOLD}[4/8] Dados — Postgres+pgvector e Redis${C0}"
   local PGP; PGP=$(pw)
   if ! docker secret inspect somosum_pg_password >/dev/null 2>&1; then
     run "printf '%s' '${PGP}' | docker secret create somosum_pg_password - >/dev/null"
@@ -329,7 +329,7 @@ EOSQL
 
 # ── etapa 5: tailscale + gestão só-tailnet ───────────────────────────────────
 tailscale_gestao(){
-  say "\n${BOLD}[5/7] Tailscale — gestão fora da internet pública${C0}"
+  say "\n${BOLD}[5/8] Tailscale — gestão fora da internet pública${C0}"
   info "Portainer (e futuras telas de admin) só vão abrir com o Tailscale ligado no SEU dispositivo."
   if ! command -v tailscale >/dev/null; then
     info "instalando Tailscale (script oficial)…"
@@ -383,7 +383,7 @@ EOF
 #!/usr/bin/env bash
 # Trava portas de GESTÃO pra aceitarem só tailnet (100.64/10) e localhost.
 set -e
-PORTS="9000"
+PORTS="9000 18789"   # 9000=Portainer · 18789=moltbot (gateway/painel)
 iptables -N SOMOSUM-GESTAO 2>/dev/null || true
 iptables -F SOMOSUM-GESTAO
 for p in $PORTS; do
@@ -417,7 +417,7 @@ EOF
 
 # ── etapa 6: segredos da aplicação ───────────────────────────────────────────
 app_secrets(){
-  say "\n${BOLD}[6/7] Segredos da aplicação${C0} ${DIM}(Enter pra pular e cadastrar depois)${C0}"
+  say "\n${BOLD}[6/8] Segredos da aplicação${C0} ${DIM}(Enter pra pular e cadastrar depois)${C0}"
   ask TGTOK "Token do bot do Telegram (do @BotFather)" ""
   if [[ -n "$TGTOK" ]] && ! docker secret inspect somosum_tg_token >/dev/null 2>&1; then
     run "printf '%s' '${TGTOK}' | docker secret create somosum_tg_token - >/dev/null"
@@ -476,9 +476,9 @@ EOF
   ok "Template da aplicação em ${BOLD}/opt/somosum/app.yml${C0} ${DIM}(deploy quando a API for construída)${C0}"
 }
 
-# ── etapa 6: backup ──────────────────────────────────────────────────────────
+# ── etapa 8: backup ──────────────────────────────────────────────────────────
 backup_cron(){
-  say "\n${BOLD}[7/7] Backup do banco — desde o dia um${C0}"
+  say "\n${BOLD}[8/8] Backup do banco — desde o dia um${C0}"
   mkdir -p "${D}/var/backups/somosum" "${D}/opt/somosum"
   cat > "${D}/opt/somosum/backup.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -528,5 +528,6 @@ dados_stack
 schema_ddl
 tailscale_gestao
 app_secrets
+moltbot_stack
 backup_cron
 resumo
