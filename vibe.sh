@@ -231,6 +231,7 @@ banco_pronto(){
   say "\n  ${LRJ}▸ Preparando o banco${C0}"
   if [[ "$DRY" == "--dry-run" ]]; then
     say "  ${DIM}[dry-run] habilitaria pgvector${SEED:+ e aplicaria o schema da semente '${SEED}'}${C0}"
+    [[ -n "$SEED" ]] && { ok "Schema da semente '${SEED}' aplicado (dry-run)"; return; }
   else
     info "aguardando o Postgres subir…"
     local i=0 CID=""
