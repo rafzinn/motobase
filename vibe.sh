@@ -140,6 +140,37 @@ preflight(){
   fi
 }
 
+# cria/atualiza o registro A na Cloudflare (nuvem cinza) — falha vira aviso, nunca derruba
+cf_dns_auto(){
+  if [[ "$DRY" == "--dry-run" ]]; then say "  ${DIM}[dry-run] criaria o registro A ${APP_DOMAIN} → ${IP} na Cloudflare${C0}"; return 0; fi
+  local api="https://api.cloudflare.com/client/v4"
+  local hdr="Authorization: Bearer ${CFTOK}"
+  info "Cloudflare: procurando a zona do domínio…"
+  local d="$APP_DOMAIN" zid=""
+  while [[ "$d" == *.* ]]; do
+    zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}&status=active" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+    [[ -n "$zid" ]] && break
+    d="${d#*.}"
+  done
+  if [[ -z "$zid" ]]; then
+    warn "não achei a zona de ${APP_DOMAIN} nessa conta — confere se o token tem a zona certa; crie o registro A manualmente por enquanto"
+    return 0
+  fi
+  local rid; rid=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=A&name=${APP_DOMAIN}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+  local body="{\"type\":\"A\",\"name\":\"${APP_DOMAIN}\",\"content\":\"${IP}\",\"ttl\":300,\"proxied\":false}"
+  local sucesso=""
+  if [[ -n "$rid" ]]; then
+    sucesso=$(curl -fsS -X PUT -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records/${rid}" 2>/dev/null | grep -o '"success":true' || true)
+  else
+    sucesso=$(curl -fsS -X POST -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records" 2>/dev/null | grep -o '"success":true' || true)
+  fi
+  if [[ -n "$sucesso" ]]; then
+    ok "Registro A ${BOLD}${APP_DOMAIN}${C0} → ${IP} criado/atualizado na Cloudflare (nuvem CINZA, como o HTTPS precisa)"
+  else
+    warn "a Cloudflare recusou (token sem permissão 'Zone.DNS Edit' nessa zona?) — crie o registro A manualmente"
+  fi
+}
+
 # ── etapa 1: questionário — TUDO de uma vez, depois o script trabalha sozinho ─
 questionario(){
   ETAPA="questionário"
@@ -157,11 +188,6 @@ questionario(){
   info "identificador técnico: ${BOLD}${SLUG}${C0} (banco, stacks, secrets)"
 
   say ""
-  say "  ${AMB}┌─────────────────────────  DNS ANTES DE CONTINUAR  ─────────────────────┐${C0}"
-  say "  ${AMB}│${C0} No painel do seu DNS (Cloudflare etc.), crie um registro tipo ${BOLD}A${C0}       ${AMB}│${C0}"
-  say "  ${AMB}│${C0} apontando o domínio do projeto pro IP deste servidor: ${BOLD}${IP}${C0}"
-  say "  ${AMB}│${C0} DICA: na primeira emissão do HTTPS deixe a nuvem ${BOLD}CINZA${C0} (DNS only).    ${AMB}│${C0}"
-  say "  ${AMB}└────────────────────────────────────────────────────────────────────────┘${C0}"
   while true; do
     ask APP_DOMAIN "Domínio do projeto (ex: app.seudominio.com.br)"
     # aceita colado com https://, barra, espaço, maiúscula — normaliza tudo
@@ -171,6 +197,23 @@ questionario(){
   done
   ask LE_EMAIL "E-mail pro certificado HTTPS (Let's Encrypt)" "admin@${APP_DOMAIN#*.}"
   [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${APP_DOMAIN#*.}"; LE_EMAIL="admin@${APP_DOMAIN#*.}"; }
+
+  say ""
+  say "  ${BOLD}Cloudflare${C0} ${DIM}(o DNS do domínio é lá? com um token eu CRIO o registro sozinho —${C0}"
+  say "    ${DIM}e ele fica salvo pra eu gerenciar registros no futuro). Como gerar:${C0}"
+  say "    ${DIM}Create Token → modelo '${BOLD}Edit zone DNS${C0}${DIM}' → Zone Resources: a zona do seu domínio${C0}"
+  link "https://dash.cloudflare.com/profile/api-tokens"
+  ask_tok CFTOK "Token da API Cloudflare" '^[A-Za-z0-9_-]{30,60}$' "40 caracteres de letras, números, _ e -"
+  if [[ -n "$CFTOK" ]]; then
+    cf_dns_auto
+  else
+    say ""
+    say "  ${AMB}┌─────────────────────────  DNS NA MÃO, ENTÃO  ──────────────────────────┐${C0}"
+    say "  ${AMB}│${C0} No painel do seu DNS, crie um registro tipo ${BOLD}A${C0} apontando               ${AMB}│${C0}"
+    say "  ${AMB}│${C0} ${BOLD}${APP_DOMAIN}${C0} pro IP deste servidor: ${BOLD}${IP}${C0}"
+    say "  ${AMB}│${C0} DICA: na primeira emissão do HTTPS deixe a nuvem ${BOLD}CINZA${C0} (DNS only).    ${AMB}│${C0}"
+    say "  ${AMB}└────────────────────────────────────────────────────────────────────────┘${C0}"
+  fi
 
   say "\n  ${BOLD}Credenciais${C0}"
   say ""
@@ -215,6 +258,7 @@ questionario(){
   say "    Projeto:    ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
   say "    Domínio:    https://${APP_DOMAIN}"
   say "    E-mail:     ${LE_EMAIL}"
+  m="pulado"; [[ -n "$CFTOK" ]] && m="${CFTOK:0:8}… (registro A automático)"; say "    Cloudflare: ${m}"
   m="pulado"; [[ -n "$CLTOK" ]] && m="${CLTOK:0:14}…"; say "    Claude:     ${m}"
   m="pulado"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "    OpenAI:     ${m}"
   m="pulado"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "    Telegram:   ${m}"
@@ -230,6 +274,13 @@ questionario(){
   cred "══════ ${PROJ_NAME} — credenciais geradas em $(date '+%d/%m/%Y %H:%M') ══════"
   cred "Servidor: $(hostname)  IP: ${IP}"
   cred "Projeto: https://${APP_DOMAIN}"
+  if [[ -n "$CFTOK" ]]; then
+    # fonte única do token Cloudflare: arquivo root-only (o Claude da VPS usa daqui)
+    mkdir -p "${D}/root/.config/cloudflare"; chmod 700 "${D}/root/.config/cloudflare"
+    printf '%s\n' "$CFTOK" > "${D}/root/.config/cloudflare/token"
+    chmod 600 "${D}/root/.config/cloudflare/token"
+    cred "Cloudflare: token da API em /root/.config/cloudflare/token (FONTE ÚNICA — não copiar)"
+  fi
   ok "Questionário completo — daqui pra frente é comigo."
 }
 
@@ -593,6 +644,16 @@ antes de criar qualquer coisa.
 - Segredo novo = docker secret; nunca hardcode, nunca .env commitado.
 EOF
     ok "CLAUDE.md da infra semeado em /opt — o Claude daqui já nasce sabendo o servidor"
+  fi
+  # gestão futura de DNS: o Claude da VPS precisa saber onde mora o token
+  if [[ -n "$CFTOK" ]]; then
+    cat >> "${D}/opt/CLAUDE.md" <<EOF
+
+## Cloudflare (DNS deste projeto)
+- Token da API (permissão Zone.DNS Edit): **/root/.config/cloudflare/token** (root-only, FONTE ÚNICA — ler em runtime, nunca copiar pra env/arquivo/código).
+- Uso: \`curl -H "Authorization: Bearer \$(cat /root/.config/cloudflare/token)" https://api.cloudflare.com/client/v4/zones\`
+- Regra: mudanças de DNS são ação pública — executar quando o dono pedir e reportar o resultado real.
+EOF
   fi
   cred ""; cred "Claude Code: instalado${CLTOK:+, autenticado} — abrir com 'claude' dentro de /opt"
 }
