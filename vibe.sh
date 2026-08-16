@@ -480,6 +480,16 @@ volumes:
 EOF
   run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer >/dev/null 2>&1"
 
+  # Portainer novo pode exigir um "setup token" na criação do admin — ele é impresso
+  # nos LOGS do container (prova de que você é o dono do servidor). Mostra se achar.
+  if [[ "$DRY" != "--dry-run" ]]; then
+    sleep 8
+    local ptok; ptok=$(docker service logs portainer_portainer 2>&1 | grep -i 'token' | tail -1 || true)
+    [[ -n "$ptok" ]] && say "  ${AMB}→ Código de segurança do Portainer (se a tela pedir):${C0}\n    ${DIM}${ptok}${C0}"
+  fi
+  info "se a tela do Portainer pedir 'setup token', pegue com: docker service logs portainer_portainer 2>&1 | grep -i token"
+  info "e lembre: o admin precisa ser criado em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
+
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
   # DOCKER-USER, e precisa sobreviver a reboot (script + unit systemd).
   cat > "${D}/usr/local/sbin/gestao-lockdown.sh" <<'EOF'
