@@ -631,7 +631,8 @@ EOF
   fi
   cred ""; cred "Moltbot (gestão, só-tailnet): http://${TSIP:-<ip-tailnet>}:18789"
   cred "  gateway token (CONTROLE TOTAL — não compartilhar): ${GWTOK}"
-  [[ -n "$MOLT_TG" ]] && cred "  bot Telegram: token informado (conectar via 'clawdbot channels add')"
+  # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
+  [[ -n "$MOLT_TG" ]] && cred "  bot Telegram: token informado (conectar via 'clawdbot channels add')" || true
 }
 
 # ── etapa 9: backup ──────────────────────────────────────────────────────────
@@ -706,6 +707,7 @@ prova_real(){
 
 # ── resumo ───────────────────────────────────────────────────────────────────
 resumo(){
+  ETAPA="resumo final"
   say "\n${GRN}${BOLD}═══ Fundação do ${PROJ_NAME} pronta ═══${C0}\n"
   say "  Projeto:     ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
   say "  Gestão:      ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — SÓ com Tailscale ligado)${C0}"
@@ -716,7 +718,8 @@ resumo(){
   say "  ${BOLD}Pra começar a construir:${C0}"
   say "   ${LRJ}cd /opt && claude${C0}   ${DIM}← o CLAUDE.md daqui já apresenta o servidor pra ele${C0}"
   say ""
-  [[ "$DRY" == "--dry-run" ]] && warn "Foi um dry-run: nada foi alterado no servidor (escritas em ${D})."
+  # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
+  [[ "$DRY" == "--dry-run" ]] && warn "Foi um dry-run: nada foi alterado no servidor (escritas em ${D})." || true
 }
 
 banner
