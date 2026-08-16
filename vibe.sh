@@ -4,7 +4,8 @@
 #
 #  bash <(curl -fsSL https://get.motobot.com.br/vibe)
 #
-#  Questionário único no início → o resto roda sozinho:
+#  Questionário único no início (com links de onde pegar cada credencial e
+#  validação de formato) → o resto roda sozinho → prova real no final:
 #    Docker Swarm → Traefik (HTTPS automático) → Postgres+pgvector → Redis
 #    → Tailscale + Portainer só-tailnet (gestão) → Claude Code autenticado
 #    com CLAUDE.md da infra → moltbot (opcional) → backup diário.
@@ -13,10 +14,12 @@
 #
 #  Uso avançado: --seed <nome>  aplica uma semente de projeto (DDL + CLAUDE.md
 #  de seeds/<nome>/ no repo) por cima da base. --dry-run não toca o disco.
+#  Rodar de novo é seguro: o que já existe é reaproveitado.
 #
 #  Por Rafael Ventura (github.com/rafzinn) × Fable 5.
 # =============================================================================
 set -euo pipefail
+set -E
 
 RAW_BASE="https://raw.githubusercontent.com/rafzinn/motobase/main"
 
@@ -30,6 +33,28 @@ warn(){ say "  ${AMB}⚠${C0} $*"; }
 die(){ say "\n  ${RED}✗ $*${C0}\n"; exit 1; }
 ask(){ local __v=$1 __p=$2 __d=${3:-}; local r; read -rp "$(echo -e "  ${AMB}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r; printf -v "$__v" '%s' "${r:-$__d}"; }
 pw(){ openssl rand -base64 18 | tr -d '/+=' | head -c 20; }
+link(){ say "    ${DIM}onde pegar → ${C0}${LRJ}$1${C0}"; }
+
+# pergunta token com validação de formato; Enter pula
+ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
+  local v
+  while true; do
+    ask v "$2" ""
+    [[ -z "$v" ]] && break
+    [[ "$v" =~ $3 ]] && break
+    warn "esse valor não parece certo (esperado algo como: ${4}) — cola de novo, ou Enter pra pular"
+  done
+  printf -v "$1" '%s' "$v"
+}
+
+ETAPA="preparação"
+on_err(){
+  say "\n  ${RED}✗ A instalação parou na etapa: ${BOLD}${ETAPA}${C0}"
+  say "  ${DIM}Não entre em pânico: rode o MESMO comando de novo — tudo que já foi feito é${C0}"
+  say "  ${DIM}reaproveitado e eu continuo do ponto certo. Se repetir o erro, manda o print${C0}"
+  say "  ${DIM}da tela pra quem te deu este instalador.${C0}\n"
+}
+trap on_err ERR
 
 DRY=""; SEED=""
 while [[ $# -gt 0 ]]; do case "$1" in
@@ -52,15 +77,58 @@ banner(){
 
 # ── checagens ────────────────────────────────────────────────────────────────
 preflight(){
-  [[ $EUID -eq 0 ]] || die "Rode como root (sudo -i antes)."
+  ETAPA="checagens iniciais"
+  [[ $EUID -eq 0 ]] || die "Rode como root (digite: sudo -i  e depois rode o comando de novo)."
   command -v apt-get >/dev/null || die "Este instalador suporta Ubuntu/Debian (apt)."
+
+  # sistema velho demais quebra o instalador do Docker
+  if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    local major="${VERSION_ID%%.*}"
+    case "${ID:-}" in
+      ubuntu) [[ "${major:-0}" -ge 22 ]] || warn "Ubuntu ${VERSION_ID} é antigo — recomendo 22.04 ou 24.04; pode falhar." ;;
+      debian) [[ "${major:-0}" -ge 11 ]] || warn "Debian ${VERSION_ID} é antigo — recomendo 11+; pode falhar." ;;
+    esac
+  fi
+
+  # máquina fraca demais = sofrimento evitável
+  local mem_mb; mem_mb=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
+  [[ "$mem_mb" -gt 0 && "$mem_mb" -lt 1800 ]] && warn "Só ${mem_mb}MB de RAM — o mínimo confortável é 2GB (4GB ideal)."
+  local disk_gb; disk_gb=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)
+  [[ "$disk_gb" -gt 0 && "$disk_gb" -lt 15 ]] && warn "Só ${disk_gb}GB livres no disco — o mínimo confortável é 20GB."
+
   IP=$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
   ok "Servidor: $(hostname) — IP público ${BOLD}${IP}${C0}"
+
+  # VPS recém-criada costuma estar atualizando sozinha — espera o apt liberar
+  if command -v fuser >/dev/null 2>&1; then
+    local w=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+      [[ $w -eq 0 ]] && info "o servidor está terminando uma atualização automática — aguardando liberar…"
+      sleep 5; w=$((w+5))
+      [[ $w -ge 300 ]] && die "O apt está ocupado há 5 minutos. Espere um pouco e rode o comando de novo."
+    done
+  fi
+
+  # porta 80/443 ocupada por outro servidor web (Apache/nginx pré-instalado) mata o Traefik
+  if ! docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
+    local p
+    for p in 80 443; do
+      if ss -ltn 2>/dev/null | grep -q ":${p} "; then
+        die "A porta ${p} já está em uso por outro programa neste servidor.
+  Provavelmente um Apache/nginx pré-instalado. Corrija com:
+    systemctl disable --now apache2 nginx 2>/dev/null
+  e rode o instalador de novo."
+      fi
+    done
+  fi
+
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" == "active" ]]; then
     warn "Este servidor JÁ tem Docker Swarm ativo."
     ask GOON "Continuar mesmo assim? Vou pular o que já existir (s/n)" "n"
     [[ "$GOON" =~ ^[sS] ]] || die "Abortado com segurança — nada foi alterado."
   fi
+
   # semente (se pedida): baixa ANTES de perguntar qualquer coisa — falha cedo
   SEED_DIR=""
   if [[ -n "$SEED" ]]; then
@@ -74,14 +142,17 @@ preflight(){
 
 # ── etapa 1: questionário — TUDO de uma vez, depois o script trabalha sozinho ─
 questionario(){
-  say "\n${BOLD}[1/9] Questionário${C0} — responde tudo agora e vai tomar um café.\n"
+  ETAPA="questionário"
+  say "\n${BOLD}[1/9] Questionário${C0} — responde tudo agora e vai tomar um café."
+  say "${DIM}      (Enter pula qualquer credencial — dá pra cadastrar depois)${C0}\n"
 
   while true; do
     ask PROJ_NAME "Nome do projeto/startup"
     SLUG=$(echo "${PROJ_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+    SLUG=${SLUG:0:24}
     # nome de schema/serviço precisa começar com LETRA (Postgres recusa começar por número)
     [[ "$SLUG" =~ ^[a-z] ]] && break
-    warn "O nome precisa ter letras (ex: 'Somos Um', 'minha startup') — só números não dá pra nomear banco e serviços."
+    warn "o nome precisa ter letras (ex: 'Somos Um', 'minha startup') — só números não dá pra nomear banco e serviços"
   done
   info "identificador técnico: ${BOLD}${SLUG}${C0} (banco, stacks, secrets)"
 
@@ -91,15 +162,37 @@ questionario(){
   say "  ${AMB}│${C0} apontando o domínio do projeto pro IP deste servidor: ${BOLD}${IP}${C0}"
   say "  ${AMB}│${C0} DICA: na primeira emissão do HTTPS deixe a nuvem ${BOLD}CINZA${C0} (DNS only).    ${AMB}│${C0}"
   say "  ${AMB}└────────────────────────────────────────────────────────────────────────┘${C0}"
-  ask APP_DOMAIN "Domínio do projeto (ex: app.seudominio.com.br)"
-  [[ -n "$APP_DOMAIN" ]] || die "Preciso de um domínio."
+  while true; do
+    ask APP_DOMAIN "Domínio do projeto (ex: app.seudominio.com.br)"
+    # aceita colado com https://, barra, espaço, maiúscula — normaliza tudo
+    APP_DOMAIN=$(echo "$APP_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
+    [[ "$APP_DOMAIN" == *.* ]] && break
+    warn "isso não parece um domínio (precisa ter ponto, ex: app.meusite.com.br)"
+  done
   ask LE_EMAIL "E-mail pro certificado HTTPS (Let's Encrypt)" "admin@${APP_DOMAIN#*.}"
+  [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${APP_DOMAIN#*.}"; LE_EMAIL="admin@${APP_DOMAIN#*.}"; }
 
-  say "\n  ${BOLD}Credenciais${C0} ${DIM}(Enter pula qualquer uma — dá pra cadastrar depois)${C0}"
-  ask CLTOK "Token do Claude (rode ${BOLD}claude setup-token${C0} no SEU computador e cole aqui; ou chave sk-ant-api…)" ""
-  ask OAKEY "Chave da OpenAI (sk-…) — se o produto for usar IA da OpenAI" ""
-  ask TGTOK "Token de bot do Telegram (do @BotFather) — se o produto for usar" ""
-  ask TSKEY "Auth key do Tailscale (tskey-…) ${DIM}— com ela o script não para pra login${C0}" ""
+  say "\n  ${BOLD}Credenciais${C0}"
+  say ""
+  say "  ${BOLD}Claude${C0} ${DIM}(o programador desta VPS)${C0} — jeito FÁCIL: no SEU computador, rode ${BOLD}claude setup-token${C0}"
+  say "    ${DIM}e cole aqui o token gerado (usa sua assinatura). Alternativa: chave de API →${C0}"
+  link "https://console.anthropic.com/settings/keys"
+  ask_tok CLTOK "Token do Claude" '^sk-ant-' "sk-ant-oat01-… ou sk-ant-api03-…"
+
+  say ""
+  say "  ${BOLD}OpenAI${C0} ${DIM}(se o produto for usar IA da OpenAI)${C0}"
+  link "https://platform.openai.com/api-keys"
+  ask_tok OAKEY "Chave da OpenAI" '^sk-' "sk-proj-…"
+
+  say ""
+  say "  ${BOLD}Telegram${C0} ${DIM}(se o produto for ter bot) — fale com o @BotFather, mande /newbot e copie o token${C0}"
+  link "https://t.me/BotFather"
+  ask_tok TGTOK "Token do bot Telegram" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
+
+  say ""
+  say "  ${BOLD}Tailscale${C0} ${DIM}(rede privada de gestão) — em Keys, clique 'Generate auth key'${C0}"
+  link "https://login.tailscale.com/admin/settings/keys"
+  ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…  (sem ela, o script para num link de login)"
 
   say ""
   ask QUER_MOLT "Instalar o moltbot (agente pessoal OpenClaw)? (s/n)" "n"
@@ -107,7 +200,7 @@ questionario(){
   if [[ "$QUER_MOLT" =~ ^[sS] ]]; then
     say "  ${DIM}Um bot do Telegram só roda em UM servidor — se o seu moltbot atual já usa um bot${C0}"
     say "  ${DIM}em outra VPS, crie um bot NOVO no @BotFather pra este.${C0}"
-    ask MOLT_TG "Token do bot Telegram do moltbot (Enter pra configurar depois)" ""
+    ask_tok MOLT_TG "Token do bot Telegram do moltbot" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
   fi
 
   info "conferindo propagação de ${APP_DOMAIN}…"
@@ -116,6 +209,19 @@ questionario(){
   elif [[ -n "$resolved" ]]; then warn "${APP_DOMAIN} resolve pra ${resolved} (esperava ${IP}). Se a nuvem laranja está ligada, é normal."
   else warn "Ainda não resolve — o HTTPS pode falhar na 1ª tentativa e se corrigir sozinho depois."
   fi
+
+  # conferência final — errou algo? refaz sem dó
+  local m; say "\n  ${BOLD}Confere aí:${C0}"
+  say "    Projeto:    ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
+  say "    Domínio:    https://${APP_DOMAIN}"
+  say "    E-mail:     ${LE_EMAIL}"
+  m="pulado"; [[ -n "$CLTOK" ]] && m="${CLTOK:0:14}…"; say "    Claude:     ${m}"
+  m="pulado"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "    OpenAI:     ${m}"
+  m="pulado"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "    Telegram:   ${m}"
+  m="pulado (login por link)"; [[ -n "$TSKEY" ]] && m="${TSKEY:0:14}…"; say "    Tailscale:  ${m}"
+  m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim";      say "    Moltbot:    ${m}"
+  ask CONF "Tudo certo? (s = bora / n = responder de novo)" "s"
+  [[ "$CONF" =~ ^[sS] ]] || { questionario; return; }
 
   CRED="${D}/root/${SLUG}-credenciais.txt"
   mkdir -p "${D}/root"
@@ -129,6 +235,7 @@ questionario(){
 
 # ── etapa 2: docker + swarm ──────────────────────────────────────────────────
 docker_swarm(){
+  ETAPA="Docker + Swarm"
   say "\n${BOLD}[2/9] Docker + Swarm${C0}"
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
@@ -145,6 +252,7 @@ docker_swarm(){
 
 # ── etapa 3: traefik ─────────────────────────────────────────────────────────
 traefik_stack(){
+  ETAPA="Traefik (HTTPS)"
   say "\n${BOLD}[3/9] Traefik — o porteiro HTTPS${C0}"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
     ok "Traefik já existe neste Swarm — mantendo o que está no ar"
@@ -184,12 +292,13 @@ services:
 networks:
   web: { external: true }
 EOF
-  run "docker stack deploy -c /opt/traefik/stack.yml traefik >/dev/null"
+  run "docker stack deploy --detach=true -c /opt/traefik/stack.yml traefik >/dev/null 2>&1"
   ok "Traefik no ar — todo serviço novo ganha HTTPS automático"
 }
 
 # ── etapa 4: banco + redis (CRUS — schema é com você e o Claude) ─────────────
 dados_stack(){
+  ETAPA="banco de dados"
   say "\n${BOLD}[4/9] Dados — Postgres+pgvector e Redis${C0}"
   local PGP; PGP=$(pw)
   if ! docker secret inspect "${SLUG}_pg_password" >/dev/null 2>&1; then
@@ -221,7 +330,7 @@ secrets:
   ${SLUG}_pg_password: { external: true }
 volumes: { pgdata: {}, redisdata: {} }
 EOF
-  run "docker stack deploy -c /opt/${SLUG}/stack.yml ${SLUG} >/dev/null"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/stack.yml ${SLUG} >/dev/null 2>&1"
   ok "Postgres+pgvector (host interno: ${BOLD}${SLUG}_postgres${C0}) e Redis (${BOLD}${SLUG}_redis${C0}) no ar"
   info "rede '${SLUG}_internal': banco e redis NÃO ficam expostos na web"
   cred ""; cred "Postgres: host ${SLUG}_postgres:5432  db ${SLUG}  user postgres"
@@ -231,6 +340,7 @@ EOF
 }
 
 banco_pronto(){
+  ETAPA="preparação do banco"
   say "\n  ${LRJ}▸ Preparando o banco${C0}"
   if [[ "$DRY" == "--dry-run" ]]; then
     say "  ${DIM}[dry-run] habilitaria pgvector${SEED:+ e aplicaria o schema da semente '${SEED}'}${C0}"
@@ -240,7 +350,7 @@ banco_pronto(){
     local i=0 CID=""
     until CID=$(docker ps -q -f name="${SLUG}_postgres" | head -1) && [[ -n "$CID" ]] \
       && docker exec "$CID" pg_isready -U postgres >/dev/null 2>&1; do
-      i=$((i+1)); [[ $i -gt 60 ]] && die "Postgres não subiu em 2 minutos — veja: docker service ps ${SLUG}_postgres"
+      i=$((i+1)); [[ $i -gt 60 ]] && die "Postgres não subiu em 2 minutos — rode o comando de novo; se repetir, veja: docker service ps ${SLUG}_postgres"
       sleep 2
     done
     docker exec "$CID" psql -U postgres -d "${SLUG}" -c "create extension if not exists vector;" >/dev/null
@@ -256,6 +366,7 @@ banco_pronto(){
 
 # ── etapa 5: secrets da aplicação (já respondidos no questionário) ───────────
 app_secrets(){
+  ETAPA="secrets da aplicação"
   say "\n${BOLD}[5/9] Secrets da aplicação${C0}"
   if [[ -n "$TGTOK" ]] && ! docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1; then
     run "printf '%s' '${TGTOK}' | docker secret create ${SLUG}_tg_token - >/dev/null"
@@ -315,6 +426,7 @@ EOF
 
 # ── etapa 6: tailscale + gestão só-tailnet ───────────────────────────────────
 tailscale_gestao(){
+  ETAPA="Tailscale + Portainer"
   say "\n${BOLD}[6/9] Tailscale — gestão fora da internet pública${C0}"
   info "Portainer (e o que mais for gestão) só abre com o Tailscale ligado no SEU dispositivo."
   if ! command -v tailscale >/dev/null; then
@@ -324,13 +436,19 @@ tailscale_gestao(){
   if [[ "$DRY" == "--dry-run" ]]; then
     say "  ${DIM}[dry-run] tailscale up${TSKEY:+ --authkey=***}${C0}"; TSIP="100.x.y.z"
   else
-    if [[ -n "$TSKEY" ]]; then tailscale up --authkey="$TSKEY"
+    if [[ -n "$TSKEY" ]]; then
+      # auth key expirada/errada NÃO derruba a instalação: cai pro login por link
+      tailscale up --authkey="$TSKEY" 2>/dev/null || {
+        warn "a auth key não foi aceita (expirada?) — indo pro login por link:"
+        say "  ${AMB}→ Abra o link abaixo no navegador e autorize este servidor na sua tailnet:${C0}"
+        tailscale up
+      }
     else
       say "  ${AMB}→ Abra o link que vai aparecer abaixo e autorize este servidor na sua tailnet:${C0}"
       tailscale up
     fi
     TSIP=$(tailscale ip -4 2>/dev/null | head -1)
-    [[ -n "$TSIP" ]] || die "Tailscale não subiu — rode 'tailscale up' manualmente e repita."
+    [[ -n "$TSIP" ]] || die "Tailscale não subiu — rode 'tailscale up' manualmente e depois o instalador de novo."
   fi
   ok "Servidor na tailnet: ${BOLD}${TSIP}${C0}"
 
@@ -360,7 +478,7 @@ networks:
 volumes:
   pdata:
 EOF
-  run "docker stack deploy -c /opt/${SLUG}/portainer.yml portainer >/dev/null"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer >/dev/null 2>&1"
 
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
   # DOCKER-USER, e precisa sobreviver a reboot (script + unit systemd).
@@ -402,6 +520,7 @@ EOF
 
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
 claude_code(){
+  ETAPA="Claude Code"
   say "\n${BOLD}[7/9] Claude Code — pronto pra receber ordens${C0}"
   if ! command -v node >/dev/null || [[ "$(node -v 2>/dev/null | grep -oP '\d+' | head -1)" -lt 20 ]]; then
     info "instalando Node.js 22 (NodeSource)…"
@@ -410,9 +529,11 @@ claude_code(){
   ok "Node $(node -v 2>/dev/null || echo '(dry-run)')"
   if ! command -v claude >/dev/null; then
     info "instalando Claude Code…"
-    run "npm install -g @anthropic-ai/claude-code >/dev/null 2>&1"
+    # falha aqui NÃO derruba a infra — dá pra instalar depois
+    run "npm install -g @anthropic-ai/claude-code >/dev/null 2>&1" \
+      || warn "não consegui instalar o Claude Code agora — depois rode: npm install -g @anthropic-ai/claude-code"
   fi
-  ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo instalado)"
+  command -v claude >/dev/null && ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo instalado)"
 
   # credencial: setup-token (sk-ant-oat…) vira CLAUDE_CODE_OAUTH_TOKEN; chave API vira ANTHROPIC_API_KEY
   mkdir -p "${D}/etc/profile.d"
@@ -468,8 +589,10 @@ EOF
 
 # ── etapa 8: moltbot (agente pessoal) ────────────────────────────────────────
 moltbot_stack(){
+  ETAPA="moltbot"
   say "\n${BOLD}[8/9] Moltbot — agente pessoal (OpenClaw)${C0}"
   [[ "$QUER_MOLT" =~ ^[sS] ]] || { info "pulado — instale depois rodando o script de novo"; return; }
+  [[ "$(uname -m)" != "x86_64" ]] && warn "processador $(uname -m): a imagem do moltbot pode não existir pra essa arquitetura"
   local GWTOK; GWTOK=$(pw)$(pw)
   mkdir -p "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/moltbot.yml" <<EOF
@@ -499,7 +622,7 @@ volumes:
   moltbot_workspace:
 EOF
   chmod 600 "${D}/opt/${SLUG}/moltbot.yml"   # contém token/chave — root-only
-  run "docker stack deploy -c /opt/${SLUG}/moltbot.yml moltbot >/dev/null"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot >/dev/null 2>&1"
   ok "Moltbot no ar — painel: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789/?token=${GWTOK}${C0} ${DIM}(só com Tailscale ligado)${C0}"
   info "1º acesso: o browser vira device 'Pending' — aprove com: docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot devices approve <requestId>"
   if [[ -n "$MOLT_TG" ]]; then
@@ -513,6 +636,7 @@ EOF
 
 # ── etapa 9: backup ──────────────────────────────────────────────────────────
 backup_cron(){
+  ETAPA="backup"
   say "\n${BOLD}[9/9] Backup do banco — desde o dia um${C0}"
   mkdir -p "${D}/var/backups/${SLUG}" "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/backup.sh" <<EOF
@@ -536,6 +660,47 @@ EOF
   say "     ${BOLD}bash <(curl -fsSL https://get.motobot.com.br/guard)${C0}"
 }
 
+# ── prova real: conferir que tudo REALMENTE subiu ────────────────────────────
+prova_real(){
+  ETAPA="prova real"
+  [[ "$DRY" == "--dry-run" ]] && return 0
+  say "\n${BOLD}Prova real — conferindo tudo que subiu:${C0}"
+  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent"
+  [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
+  local tent=0 pendentes="" s rep have want
+  while true; do
+    pendentes=""
+    for s in $esperados; do
+      rep=$(docker service ls --format '{{.Name}} {{.Replicas}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')
+      have="${rep%%/*}"; want="${rep##*/}"; want="${want%% *}"
+      [[ -n "$rep" && "$have" == "$want" && "$have" != "0" ]] || pendentes="$pendentes $s"
+    done
+    [[ -z "$pendentes" ]] && break
+    tent=$((tent+1))
+    [[ $tent -gt 18 ]] && break   # ~90s de paciência
+    sleep 5
+  done
+  for s in $esperados; do
+    rep=$(docker service ls --format '{{.Name}} {{.Replicas}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')
+    have="${rep%%/*}"; want="${rep##*/}"; want="${want%% *}"
+    if [[ -n "$rep" && "$have" == "$want" && "$have" != "0" ]]; then ok "$s ($rep)"
+    else warn "$s ainda não está de pé (${rep:-não existe}) — investigar: docker service ps $s --no-trunc"
+    fi
+  done
+  # banco responde e (se semente) tabelas existem
+  local CID; CID=$(docker ps -q -f name="${SLUG}_postgres" | head -1)
+  if [[ -n "$CID" ]] && docker exec "$CID" pg_isready -U postgres >/dev/null 2>&1; then
+    local nt; nt=$(docker exec "$CID" psql -U postgres -d "${SLUG}" -tAc \
+      "select count(*) from information_schema.tables where table_schema='${SLUG}'" 2>/dev/null | tr -d ' ')
+    if [[ -n "$SEED" ]]; then ok "Banco respondendo — ${nt:-?} tabelas no schema ${SLUG}"
+    else ok "Banco respondendo (schema virgem, como planejado)"
+    fi
+  else
+    warn "Banco não respondeu ao teste — investigar: docker service ps ${SLUG}_postgres"
+  fi
+  command -v claude >/dev/null && ok "Claude Code no PATH" || warn "Claude Code não encontrado no PATH"
+}
+
 # ── resumo ───────────────────────────────────────────────────────────────────
 resumo(){
   say "\n${GRN}${BOLD}═══ Fundação do ${PROJ_NAME} pronta ═══${C0}\n"
@@ -543,7 +708,7 @@ resumo(){
   say "  Gestão:      ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — SÓ com Tailscale ligado)${C0}"
   say "  Banco:       ${SLUG}_postgres (db ${SLUG}, pgvector${SEED:+, schema da semente '${SEED}'})"
   say "  Fila/sessão: ${SLUG}_redis"
-  say "  Credenciais: ${BOLD}/root/${SLUG}-credenciais.txt${C0} ${DIM}(chmod 600 — anote e apague)${C0}"
+  say "  Credenciais: ${BOLD}/root/${SLUG}-credenciais.txt${C0} ${DIM}(chmod 600 — anote num gerenciador de senhas e apague)${C0}"
   say ""
   say "  ${BOLD}Pra começar a construir:${C0}"
   say "   ${LRJ}cd /opt && claude${C0}   ${DIM}← o CLAUDE.md daqui já apresenta o servidor pra ele${C0}"
@@ -562,4 +727,5 @@ tailscale_gestao
 claude_code
 moltbot_stack
 backup_cron
+prova_real
 resumo
