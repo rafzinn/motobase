@@ -22,18 +22,49 @@ set -euo pipefail
 set -E
 
 RAW_BASE="https://raw.githubusercontent.com/rafzinn/motobase/main"
+LARGURA=70
 
-# ── ui ───────────────────────────────────────────────────────────────────────
+# ── paleta ───────────────────────────────────────────────────────────────────
 C0='\033[0m'; DIM='\033[2m'; BOLD='\033[1m'
-RED='\033[38;5;203m'; AMB='\033[38;5;179m'; GRN='\033[38;5;108m'; LRJ='\033[38;5;173m'
+RED='\033[38;5;203m'; AMB='\033[38;5;179m'; GRN='\033[38;5;108m'
+LRJ='\033[38;5;173m'      # laranja terracota (identidade)
+LRJ_CLR='\033[38;5;180m'  # laranja claro (topo do degradê)
+LRJ_ESC='\033[38;5;137m'  # laranja sombra (base do degradê)
+CHIP='\033[48;5;173m\033[38;5;236m'   # etiqueta: fundo laranja, texto grafite
+
+# ── tipografia do terminal ───────────────────────────────────────────────────
 say(){ echo -e "$*"; }
-ok(){ say "  ${GRN}✓${C0} $*"; }
-info(){ say "  ${DIM}├─${C0} $*"; }
-warn(){ say "  ${AMB}⚠${C0} $*"; }
-die(){ say "\n  ${RED}✗ $*${C0}\n"; exit 1; }
-ask(){ local __v=$1 __p=$2 __d=${3:-}; local r; read -rp "$(echo -e "  ${AMB}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r; printf -v "$__v" '%s' "${r:-$__d}"; }
+regua(){ local n=${1:-$LARGURA}; printf '─%.0s' $(seq 1 "$n"); }
+
+# nível 1 — etapa
+etapa(){ # $1=n/total  $2=título  $3=subtítulo (opcional)
+  local n="$1" t="$2" s="${3:-}" vis fill
+  vis=$(( 2 + 2 + ${#n} + 2 + ${#t} + 1 ))
+  fill=$(( LARGURA - vis )); [[ $fill -lt 3 ]] && fill=3
+  say ""
+  say "  ${CHIP} ${n} ${C0} ${BOLD}${t}${C0} ${DIM}$(regua $fill)${C0}"
+  [[ -n "$s" ]] && say "        ${DIM}${s}${C0}" || true
+}
+
+# nível 2 — itens da etapa
+ok(){   say "     ${GRN}✓${C0} $*"; }
+info(){ say "     ${DIM}·${C0} $*"; }
+warn(){ say "     ${AMB}▲${C0} $*"; }
+# nível 3 — detalhe pendurado no item
+sub(){  say "       ${DIM}└ $*${C0}"; }
+link(){ say "       ${DIM}└ onde pegar:${C0} ${LRJ}$1${C0}"; }
+
+die(){ say "\n     ${RED}✗ $*${C0}\n"; exit 1; }
+ask(){ local __v=$1 __p=$2 __d=${3:-}; local r
+  read -rp "$(echo -e "     ${LRJ}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r
+  printf -v "$__v" '%s' "${r:-$__d}"; }
 pw(){ openssl rand -base64 18 | tr -d '/+=' | head -c 20; }
-link(){ say "    ${DIM}onde pegar → ${C0}${LRJ}$1${C0}"; }
+
+# bloco de destaque (avisos que o usuário PRECISA ler) — barra lateral, sem
+# borda direita: fechar caixa com texto colorido exigiria contar bytes ANSI
+caixa_abre(){ say ""; say "     ${AMB}▛$(regua $((LARGURA-6)))${C0}"; }
+caixa_txt(){  say "     ${AMB}▌${C0} $*"; }
+caixa_fecha(){ say "     ${AMB}▙$(regua $((LARGURA-6)))${C0}"; say ""; }
 
 # pergunta token com validação de formato; Enter pula
 ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
@@ -42,17 +73,20 @@ ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
     ask v "$2" ""
     [[ -z "$v" ]] && break
     [[ "$v" =~ $3 ]] && break
-    warn "esse valor não parece certo (esperado algo como: ${4}) — cola de novo, ou Enter pra pular"
+    warn "esse valor não parece certo — esperado algo como: ${4}"
+    sub "cola de novo, ou Enter pra pular"
   done
   printf -v "$1" '%s' "$v"
 }
 
 ETAPA="preparação"
 on_err(){
-  say "\n  ${RED}✗ A instalação parou na etapa: ${BOLD}${ETAPA}${C0}"
-  say "  ${DIM}Não entre em pânico: rode o MESMO comando de novo — tudo que já foi feito é${C0}"
-  say "  ${DIM}reaproveitado e eu continuo do ponto certo. Se repetir o erro, manda o print${C0}"
-  say "  ${DIM}da tela pra quem te deu este instalador.${C0}\n"
+  say ""
+  say "  ${RED}✗ A instalação parou na etapa: ${BOLD}${ETAPA}${C0}"
+  say "     ${DIM}Não entre em pânico: rode o MESMO comando de novo — tudo que já foi feito${C0}"
+  say "     ${DIM}é reaproveitado e eu continuo do ponto certo. Se repetir o erro, mande${C0}"
+  say "     ${DIM}o print da tela pra quem te deu este instalador.${C0}"
+  say ""
 }
 trap on_err ERR
 
@@ -65,19 +99,26 @@ esac; shift; done
 
 D=""   # prefixo de escrita: em dry-run, NADA toca o disco real
 if [[ "$DRY" == "--dry-run" ]]; then D=$(mktemp -d); fi
-run(){ if [[ "$DRY" == "--dry-run" ]]; then say "  ${DIM}[dry-run]${C0} $*"; else eval "$@"; fi; }
+run(){ if [[ "$DRY" == "--dry-run" ]]; then say "       ${DIM}[dry-run] $*${C0}"; else eval "$@"; fi; }
 
 banner(){
   say ""
-  say "  ${LRJ}  ⚡ V I B E   S T A C K${C0}"
-  say "  ${DIM}  sua startup enxuta, em uma linha — por Rafael Ventura × Fable 5${C0}"
-  [[ -n "$SEED" ]] && say "  ${DIM}  semente de projeto: ${BOLD}${SEED}${C0}"
+  say "   ${LRJ_CLR}██╗   ██╗██╗██████╗ ███████╗${C0}"
+  say "   ${LRJ_CLR}██║   ██║██║██╔══██╗██╔════╝${C0}"
+  say "   ${LRJ}██║   ██║██║██████╔╝█████╗${C0}"
+  say "   ${LRJ}╚██╗ ██╔╝██║██╔══██╗██╔══╝${C0}"
+  say "   ${LRJ_ESC} ╚████╔╝ ██║██████╔╝███████╗${C0}"
+  say "   ${LRJ_ESC}  ╚═══╝  ╚═╝╚═════╝ ╚══════╝${C0}"
   say ""
+  say "   ${CHIP} S T A C K ${C0}  ${BOLD}sua startup enxuta, em uma linha${C0}"
+  say "   ${DIM}por Rafael Ventura × Fable 5${SEED:+  ·  semente: ${SEED}}${C0}"
+  say "  ${DIM}$(regua $LARGURA)${C0}"
 }
 
 # ── checagens ────────────────────────────────────────────────────────────────
 preflight(){
   ETAPA="checagens iniciais"
+  etapa "0/9" "PREPARAÇÃO" "conferindo se este servidor está apto"
   [[ $EUID -eq 0 ]] || die "Rode como root (digite: sudo -i  e depois rode o comando de novo)."
   command -v apt-get >/dev/null || die "Este instalador suporta Ubuntu/Debian (apt)."
 
@@ -93,12 +134,13 @@ preflight(){
 
   # máquina fraca demais = sofrimento evitável
   local mem_mb; mem_mb=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)
-  [[ "$mem_mb" -gt 0 && "$mem_mb" -lt 1800 ]] && warn "Só ${mem_mb}MB de RAM — o mínimo confortável é 2GB (4GB ideal)."
+  [[ "$mem_mb" -gt 0 && "$mem_mb" -lt 1800 ]] && warn "Só ${mem_mb}MB de RAM — o mínimo confortável é 2GB (4GB ideal)." || true
   local disk_gb; disk_gb=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)
-  [[ "$disk_gb" -gt 0 && "$disk_gb" -lt 15 ]] && warn "Só ${disk_gb}GB livres no disco — o mínimo confortável é 20GB."
+  [[ "$disk_gb" -gt 0 && "$disk_gb" -lt 15 ]] && warn "Só ${disk_gb}GB livres no disco — o mínimo confortável é 20GB." || true
 
   IP=$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-  ok "Servidor: $(hostname) — IP público ${BOLD}${IP}${C0}"
+  ok "Servidor ${BOLD}$(hostname)${C0} — IP público ${BOLD}${IP}${C0}"
+  ok "Sistema ${BOLD}${PRETTY_NAME:-Linux}${C0} · ${mem_mb}MB RAM · ${disk_gb}GB livres"
 
   # VPS recém-criada costuma estar atualizando sozinha — espera o apt liberar
   if command -v fuser >/dev/null 2>&1; then
@@ -116,9 +158,9 @@ preflight(){
     for p in 80 443; do
       if ss -ltn 2>/dev/null | grep -q ":${p} "; then
         die "A porta ${p} já está em uso por outro programa neste servidor.
-  Provavelmente um Apache/nginx pré-instalado. Corrija com:
-    systemctl disable --now apache2 nginx 2>/dev/null
-  e rode o instalador de novo."
+       Provavelmente um Apache/nginx pré-instalado. Corrija com:
+         systemctl disable --now apache2 nginx 2>/dev/null
+       e rode o instalador de novo."
       fi
     done
   fi
@@ -136,13 +178,13 @@ preflight(){
     curl -fsSL "${RAW_BASE}/seeds/${SEED}/CLAUDE.md" -o "${SEED_DIR}/CLAUDE.md" 2>/dev/null \
       || die "Semente '${SEED}' não encontrada no repo (seeds/${SEED}/)."
     curl -fsSL "${RAW_BASE}/seeds/${SEED}/ddl.sql" -o "${SEED_DIR}/ddl.sql" 2>/dev/null || true
-    ok "Semente '${SEED}' baixada$([[ -f ${SEED_DIR}/ddl.sql ]] && echo ' (com schema de banco)')"
+    ok "Semente ${BOLD}${SEED}${C0} baixada$([[ -f ${SEED_DIR}/ddl.sql ]] && echo ' (com schema de banco)')"
   fi
 }
 
 # cria/atualiza o registro A na Cloudflare (nuvem cinza) — falha vira aviso, nunca derruba
 cf_dns_auto(){
-  if [[ "$DRY" == "--dry-run" ]]; then say "  ${DIM}[dry-run] criaria o registro A ${APP_DOMAIN} → ${IP} na Cloudflare${C0}"; return 0; fi
+  if [[ "$DRY" == "--dry-run" ]]; then say "       ${DIM}[dry-run] criaria o registro A ${APP_DOMAIN} → ${IP} na Cloudflare${C0}"; return 0; fi
   local api="https://api.cloudflare.com/client/v4"
   local hdr="Authorization: Bearer ${CFTOK}"
   info "Cloudflare: procurando a zona do domínio…"
@@ -153,7 +195,8 @@ cf_dns_auto(){
     d="${d#*.}"
   done
   if [[ -z "$zid" ]]; then
-    warn "não achei a zona de ${APP_DOMAIN} nessa conta — confere se o token tem a zona certa; crie o registro A manualmente por enquanto"
+    warn "não achei a zona de ${APP_DOMAIN} nessa conta"
+    sub "confere se o token tem a zona certa; por enquanto, crie o registro A manualmente"
     return 0
   fi
   local rid; rid=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=A&name=${APP_DOMAIN}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
@@ -165,17 +208,18 @@ cf_dns_auto(){
     sucesso=$(curl -fsS -X POST -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records" 2>/dev/null | grep -o '"success":true' || true)
   fi
   if [[ -n "$sucesso" ]]; then
-    ok "Registro A ${BOLD}${APP_DOMAIN}${C0} → ${IP} criado/atualizado na Cloudflare (nuvem CINZA, como o HTTPS precisa)"
+    ok "Registro A ${BOLD}${APP_DOMAIN}${C0} → ${IP} criado na Cloudflare"
+    sub "nuvem CINZA (DNS only), como o HTTPS precisa na primeira emissão"
   else
-    warn "a Cloudflare recusou (token sem permissão 'Zone.DNS Edit' nessa zona?) — crie o registro A manualmente"
+    warn "a Cloudflare recusou a alteração"
+    sub "o token tem permissão 'Zone.DNS Edit' nessa zona? crie o registro A manualmente"
   fi
 }
 
 # ── etapa 1: questionário — TUDO de uma vez, depois o script trabalha sozinho ─
 questionario(){
   ETAPA="questionário"
-  say "\n${BOLD}[1/9] Questionário${C0} — responde tudo agora e vai tomar um café."
-  say "${DIM}      (Enter pula qualquer credencial — dá pra cadastrar depois)${C0}\n"
+  etapa "1/9" "QUESTIONÁRIO" "responde tudo agora e vai tomar um café · Enter pula credencial"
 
   while true; do
     ask PROJ_NAME "Nome do projeto/startup"
@@ -183,9 +227,10 @@ questionario(){
     SLUG=${SLUG:0:24}
     # nome de schema/serviço precisa começar com LETRA (Postgres recusa começar por número)
     [[ "$SLUG" =~ ^[a-z] ]] && break
-    warn "o nome precisa ter letras (ex: 'Somos Um', 'minha startup') — só números não dá pra nomear banco e serviços"
+    warn "o nome precisa ter letras (ex: 'Somos Um', 'minha startup')"
+    sub "só números não dá pra nomear banco e serviços"
   done
-  info "identificador técnico: ${BOLD}${SLUG}${C0} (banco, stacks, secrets)"
+  info "identificador técnico: ${BOLD}${SLUG}${C0} ${DIM}(banco, stacks, secrets)${C0}"
 
   say ""
   while true; do
@@ -199,71 +244,78 @@ questionario(){
   [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${APP_DOMAIN#*.}"; LE_EMAIL="admin@${APP_DOMAIN#*.}"; }
 
   say ""
-  say "  ${BOLD}Cloudflare${C0} ${DIM}(o DNS do domínio é lá? com um token eu CRIO o registro sozinho —${C0}"
-  say "    ${DIM}e ele fica salvo pra eu gerenciar registros no futuro). Como gerar:${C0}"
-  say "    ${DIM}Create Token → modelo '${BOLD}Edit zone DNS${C0}${DIM}' → Zone Resources: a zona do seu domínio${C0}"
+  say "     ${BOLD}Cloudflare${C0} ${DIM}— com um token eu crio o registro DNS sozinho${C0}"
+  sub "Create Token → modelo 'Edit zone DNS' → Zone Resources: a zona do seu domínio"
   link "https://dash.cloudflare.com/profile/api-tokens"
   ask_tok CFTOK "Token da API Cloudflare" '^[A-Za-z0-9_-]{30,60}$' "40 caracteres de letras, números, _ e -"
   if [[ -n "$CFTOK" ]]; then
     cf_dns_auto
   else
-    say ""
-    say "  ${AMB}┌─────────────────────────  DNS NA MÃO, ENTÃO  ──────────────────────────┐${C0}"
-    say "  ${AMB}│${C0} No painel do seu DNS, crie um registro tipo ${BOLD}A${C0} apontando               ${AMB}│${C0}"
-    say "  ${AMB}│${C0} ${BOLD}${APP_DOMAIN}${C0} pro IP deste servidor: ${BOLD}${IP}${C0}"
-    say "  ${AMB}│${C0} DICA: na primeira emissão do HTTPS deixe a nuvem ${BOLD}CINZA${C0} (DNS only).    ${AMB}│${C0}"
-    say "  ${AMB}└────────────────────────────────────────────────────────────────────────┘${C0}"
+    caixa_abre
+    caixa_txt "${BOLD}DNS NA MÃO, ENTÃO${C0}"
+    caixa_txt ""
+    caixa_txt "No painel do seu DNS, crie um registro tipo ${BOLD}A${C0} apontando"
+    caixa_txt "${BOLD}${APP_DOMAIN}${C0} pro IP deste servidor: ${BOLD}${IP}${C0}"
+    caixa_txt ""
+    caixa_txt "${DIM}Na primeira emissão do HTTPS, deixe a nuvem CINZA (DNS only).${C0}"
+    caixa_fecha
   fi
 
-  say "\n  ${BOLD}Credenciais${C0}"
   say ""
-  say "  ${BOLD}Claude${C0} ${DIM}(o programador desta VPS)${C0} — jeito FÁCIL: no SEU computador, rode ${BOLD}claude setup-token${C0}"
-  say "    ${DIM}e cole aqui o token gerado (usa sua assinatura). Alternativa: chave de API →${C0}"
+  say "     ${BOLD}Claude${C0} ${DIM}— o programador desta VPS${C0}"
+  sub "jeito fácil: rode 'claude setup-token' no SEU computador e cole aqui"
   link "https://console.anthropic.com/settings/keys"
   ask_tok CLTOK "Token do Claude" '^sk-ant-' "sk-ant-oat01-… ou sk-ant-api03-…"
 
   say ""
-  say "  ${BOLD}OpenAI${C0} ${DIM}(se o produto for usar IA da OpenAI)${C0}"
+  say "     ${BOLD}OpenAI${C0} ${DIM}— se o produto for usar IA da OpenAI${C0}"
   link "https://platform.openai.com/api-keys"
   ask_tok OAKEY "Chave da OpenAI" '^sk-' "sk-proj-…"
 
   say ""
-  say "  ${BOLD}Telegram${C0} ${DIM}(se o produto for ter bot) — fale com o @BotFather, mande /newbot e copie o token${C0}"
+  say "     ${BOLD}Telegram${C0} ${DIM}— se o produto for ter bot${C0}"
+  sub "fale com o @BotFather, mande /newbot e copie o token"
   link "https://t.me/BotFather"
   ask_tok TGTOK "Token do bot Telegram" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
 
   say ""
-  say "  ${BOLD}Tailscale${C0} ${DIM}(rede privada de gestão) — em Keys, clique 'Generate auth key'${C0}"
+  say "     ${BOLD}Tailscale${C0} ${DIM}— rede privada de gestão${C0}"
+  sub "em Keys, clique 'Generate auth key' (sem ela, o script para num link de login)"
   link "https://login.tailscale.com/admin/settings/keys"
-  ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…  (sem ela, o script para num link de login)"
+  ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…"
 
   say ""
   ask QUER_MOLT "Instalar o moltbot (agente pessoal OpenClaw)? (s/n)" "n"
   MOLT_TG=""
   if [[ "$QUER_MOLT" =~ ^[sS] ]]; then
-    say "  ${DIM}Um bot do Telegram só roda em UM servidor — se o seu moltbot atual já usa um bot${C0}"
-    say "  ${DIM}em outra VPS, crie um bot NOVO no @BotFather pra este.${C0}"
+    sub "um bot do Telegram só roda em UM servidor — se o seu moltbot atual já usa"
+    sub "um bot em outra VPS, crie um bot NOVO no @BotFather pra este"
     ask_tok MOLT_TG "Token do bot Telegram do moltbot" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
   fi
 
+  say ""
   info "conferindo propagação de ${APP_DOMAIN}…"
   local resolved; resolved=$(getent hosts "$APP_DOMAIN" | awk '{print $1}' | head -1 || true)
   if [[ "$resolved" == "$IP" ]]; then ok "DNS propagado: ${APP_DOMAIN} → ${IP}"
-  elif [[ -n "$resolved" ]]; then warn "${APP_DOMAIN} resolve pra ${resolved} (esperava ${IP}). Se a nuvem laranja está ligada, é normal."
-  else warn "Ainda não resolve — o HTTPS pode falhar na 1ª tentativa e se corrigir sozinho depois."
+  elif [[ -n "$resolved" ]]; then warn "${APP_DOMAIN} resolve pra ${resolved} (esperava ${IP})"; sub "se a nuvem laranja da Cloudflare está ligada, é normal"
+  else warn "ainda não resolve"; sub "o HTTPS pode falhar na 1ª tentativa e se corrigir sozinho depois"
   fi
 
   # conferência final — errou algo? refaz sem dó
-  local m; say "\n  ${BOLD}Confere aí:${C0}"
-  say "    Projeto:    ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
-  say "    Domínio:    https://${APP_DOMAIN}"
-  say "    E-mail:     ${LE_EMAIL}"
-  m="pulado"; [[ -n "$CFTOK" ]] && m="${CFTOK:0:8}… (registro A automático)"; say "    Cloudflare: ${m}"
-  m="pulado"; [[ -n "$CLTOK" ]] && m="${CLTOK:0:14}…"; say "    Claude:     ${m}"
-  m="pulado"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "    OpenAI:     ${m}"
-  m="pulado"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "    Telegram:   ${m}"
-  m="pulado (login por link)"; [[ -n "$TSKEY" ]] && m="${TSKEY:0:14}…"; say "    Tailscale:  ${m}"
-  m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim";      say "    Moltbot:    ${m}"
+  local m
+  say ""
+  say "  ${DIM}$(regua $LARGURA)${C0}"
+  say "     ${BOLD}CONFERE AÍ${C0}"
+  say "       ${DIM}projeto ····${C0} ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
+  say "       ${DIM}domínio ····${C0} https://${APP_DOMAIN}"
+  say "       ${DIM}e-mail ·····${C0} ${LE_EMAIL}"
+  m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="${CFTOK:0:8}… ${DIM}(DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="${CLTOK:0:14}…"; say "       ${DIM}claude ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "       ${DIM}openai ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "       ${DIM}telegram ···${C0} ${m}"
+  m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="${TSKEY:0:14}…"; say "       ${DIM}tailscale ··${C0} ${m}"
+  m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim";      say "       ${DIM}moltbot ····${C0} ${m}"
+  say "  ${DIM}$(regua $LARGURA)${C0}"
   ask CONF "Tudo certo? (s = bora / n = responder de novo)" "s"
   [[ "$CONF" =~ ^[sS] ]] || { questionario; return; }
 
@@ -281,13 +333,13 @@ questionario(){
     chmod 600 "${D}/root/.config/cloudflare/token"
     cred "Cloudflare: token da API em /root/.config/cloudflare/token (FONTE ÚNICA — não copiar)"
   fi
-  ok "Questionário completo — daqui pra frente é comigo."
+  ok "Questionário completo — ${DIM}daqui pra frente é comigo${C0}"
 }
 
 # ── etapa 2: docker + swarm ──────────────────────────────────────────────────
 docker_swarm(){
   ETAPA="Docker + Swarm"
-  say "\n${BOLD}[2/9] Docker + Swarm${C0}"
+  etapa "2/9" "DOCKER + SWARM" "o motor que roda tudo, com auto-restart"
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     run "curl -fsSL https://get.docker.com | sh >/dev/null 2>&1"
@@ -296,15 +348,16 @@ docker_swarm(){
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" != "active" ]]; then
     run "docker swarm init --advertise-addr ${IP} >/dev/null"
   fi
-  ok "Swarm ativo (auto-restart de tudo que cair)"
+  ok "Swarm ativo"
+  sub "se um serviço cair, o Swarm sobe outro sozinho"
   docker network inspect web >/dev/null 2>&1 || run "docker network create -d overlay --attachable web >/dev/null"
-  ok "Rede overlay 'web'"
+  ok "Rede overlay ${BOLD}web${C0}"
 }
 
 # ── etapa 3: traefik ─────────────────────────────────────────────────────────
 traefik_stack(){
   ETAPA="Traefik (HTTPS)"
-  say "\n${BOLD}[3/9] Traefik — o porteiro HTTPS${C0}"
+  etapa "3/9" "TRAEFIK" "o porteiro: HTTPS automático pra todo serviço novo"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
     ok "Traefik já existe neste Swarm — mantendo o que está no ar"
     return
@@ -344,13 +397,14 @@ networks:
   web: { external: true }
 EOF
   run "docker stack deploy --detach=true -c /opt/traefik/stack.yml traefik >/dev/null 2>&1"
-  ok "Traefik no ar — todo serviço novo ganha HTTPS automático"
+  ok "Traefik no ar"
+  sub "certificado Let's Encrypt emitido sozinho quando o domínio apontar pra cá"
 }
 
 # ── etapa 4: banco + redis (CRUS — schema é com você e o Claude) ─────────────
 dados_stack(){
   ETAPA="banco de dados"
-  say "\n${BOLD}[4/9] Dados — Postgres+pgvector e Redis${C0}"
+  etapa "4/9" "DADOS" "Postgres com pgvector + Redis, fora do alcance da internet"
   local PGP; PGP=$(pw)
   if ! docker secret inspect "${SLUG}_pg_password" >/dev/null 2>&1; then
     run "printf '%s' '${PGP}' | docker secret create ${SLUG}_pg_password - >/dev/null"
@@ -382,8 +436,8 @@ secrets:
 volumes: { pgdata: {}, redisdata: {} }
 EOF
   run "docker stack deploy --detach=true -c /opt/${SLUG}/stack.yml ${SLUG} >/dev/null 2>&1"
-  ok "Postgres+pgvector (host interno: ${BOLD}${SLUG}_postgres${C0}) e Redis (${BOLD}${SLUG}_redis${C0}) no ar"
-  info "rede '${SLUG}_internal': banco e redis NÃO ficam expostos na web"
+  ok "Postgres ${BOLD}${SLUG}_postgres${C0} · Redis ${BOLD}${SLUG}_redis${C0}"
+  sub "rede interna '${SLUG}_internal' — banco e redis não ficam expostos na web"
   cred ""; cred "Postgres: host ${SLUG}_postgres:5432  db ${SLUG}  user postgres"
   cred "  senha: ${PGP}  (fonte de verdade: docker secret ${SLUG}_pg_password)"
   cred "Redis: host ${SLUG}_redis:6379 (rede interna, sem senha)"
@@ -392,10 +446,9 @@ EOF
 
 banco_pronto(){
   ETAPA="preparação do banco"
-  say "\n  ${LRJ}▸ Preparando o banco${C0}"
   if [[ "$DRY" == "--dry-run" ]]; then
-    say "  ${DIM}[dry-run] habilitaria pgvector${SEED:+ e aplicaria o schema da semente '${SEED}'}${C0}"
-    [[ -n "$SEED" ]] && { ok "Schema da semente '${SEED}' aplicado (dry-run)"; return; }
+    say "       ${DIM}[dry-run] habilitaria pgvector${SEED:+ e aplicaria o schema da semente '${SEED}'}${C0}"
+    [[ -n "$SEED" ]] && { ok "Schema da semente ${BOLD}${SEED}${C0} aplicado"; return; }
   else
     info "aguardando o Postgres subir…"
     local i=0 CID=""
@@ -408,29 +461,31 @@ banco_pronto(){
     if [[ -n "$SEED" && -f "${SEED_DIR}/ddl.sql" ]]; then
       sed "s/{{SLUG}}/${SLUG}/g" "${SEED_DIR}/ddl.sql" > "/opt/${SLUG}/ddl.sql"
       docker exec -i "$CID" psql -U postgres -d "${SLUG}" -v ON_ERROR_STOP=1 < "/opt/${SLUG}/ddl.sql" >/dev/null
-      ok "Schema da semente '${SEED}' aplicado (DDL guardado em /opt/${SLUG}/ddl.sql)"
+      ok "Schema da semente ${BOLD}${SEED}${C0} aplicado"
+      sub "DDL guardado em /opt/${SLUG}/ddl.sql"
       return
     fi
   fi
-  ok "Banco ${BOLD}${SLUG}${C0} pronto, pgvector habilitado — ${DIM}sem tabelas: o schema nasce do SEU produto${C0}"
+  ok "Banco ${BOLD}${SLUG}${C0} pronto, pgvector habilitado"
+  sub "sem tabelas: o schema nasce do SEU produto"
 }
 
 # ── etapa 5: secrets da aplicação (já respondidos no questionário) ───────────
 app_secrets(){
   ETAPA="secrets da aplicação"
-  say "\n${BOLD}[5/9] Secrets da aplicação${C0}"
+  etapa "5/9" "SECRETS" "segredos guardados pelo Swarm, nunca em texto no código"
   if [[ -n "$TGTOK" ]] && ! docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1; then
     run "printf '%s' '${TGTOK}' | docker secret create ${SLUG}_tg_token - >/dev/null"
-    ok "secret ${SLUG}_tg_token criado"
+    ok "${SLUG}_tg_token"
   fi
   if [[ -n "$OAKEY" ]] && ! docker secret inspect "${SLUG}_openai_key" >/dev/null 2>&1; then
     run "printf '%s' '${OAKEY}' | docker secret create ${SLUG}_openai_key - >/dev/null"
-    ok "secret ${SLUG}_openai_key criado"
+    ok "${SLUG}_openai_key"
   fi
   local JWTS; JWTS=$(pw)$(pw)
   if ! docker secret inspect "${SLUG}_jwt_secret" >/dev/null 2>&1; then
     run "printf '%s' '${JWTS}' | docker secret create ${SLUG}_jwt_secret - >/dev/null"
-    ok "secret ${SLUG}_jwt_secret criado (login/sessões da sua app)"
+    ok "${SLUG}_jwt_secret ${DIM}(login/sessões da sua app)${C0}"
   fi
   cred ""; cred "Secrets no Swarm: ${SLUG}_pg_password, ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}"
   cred "  (cadastrar depois: printf '%s' 'VALOR' | docker secret create NOME -)"
@@ -472,30 +527,31 @@ secrets:
   ${SLUG}_tg_token: { external: true }
   ${SLUG}_openai_key: { external: true }
 EOF
-  ok "Template da aplicação em ${BOLD}/opt/${SLUG}/app.yml${C0} ${DIM}(deploy quando a API for construída)${C0}"
+  ok "Template da app em ${BOLD}/opt/${SLUG}/app.yml${C0}"
+  sub "deploy quando a API existir: docker stack deploy -c /opt/${SLUG}/app.yml ${SLUG}-app"
 }
 
 # ── etapa 6: tailscale + gestão só-tailnet ───────────────────────────────────
 tailscale_gestao(){
   ETAPA="Tailscale + Portainer"
-  say "\n${BOLD}[6/9] Tailscale — gestão fora da internet pública${C0}"
-  info "Portainer (e o que mais for gestão) só abre com o Tailscale ligado no SEU dispositivo."
+  etapa "6/9" "TAILSCALE" "painéis de gestão fora da internet pública"
+  info "Portainer só abre com o Tailscale ligado no SEU dispositivo"
   if ! command -v tailscale >/dev/null; then
     info "instalando Tailscale (script oficial)…"
     run "curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1"
   fi
   if [[ "$DRY" == "--dry-run" ]]; then
-    say "  ${DIM}[dry-run] tailscale up${TSKEY:+ --authkey=***}${C0}"; TSIP="100.x.y.z"
+    say "       ${DIM}[dry-run] tailscale up${TSKEY:+ --authkey=***}${C0}"; TSIP="100.x.y.z"
   else
     if [[ -n "$TSKEY" ]]; then
       # auth key expirada/errada NÃO derruba a instalação: cai pro login por link
       tailscale up --authkey="$TSKEY" 2>/dev/null || {
-        warn "a auth key não foi aceita (expirada?) — indo pro login por link:"
-        say "  ${AMB}→ Abra o link abaixo no navegador e autorize este servidor na sua tailnet:${C0}"
+        warn "a auth key não foi aceita (expirada?) — indo pro login por link"
+        say "     ${AMB}→ abra o link abaixo e autorize este servidor na sua tailnet:${C0}"
         tailscale up
       }
     else
-      say "  ${AMB}→ Abra o link que vai aparecer abaixo e autorize este servidor na sua tailnet:${C0}"
+      say "     ${AMB}→ abra o link abaixo e autorize este servidor na sua tailnet:${C0}"
       tailscale up
     fi
     TSIP=$(tailscale ip -4 2>/dev/null | head -1)
@@ -531,16 +587,6 @@ volumes:
 EOF
   run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer >/dev/null 2>&1"
 
-  # Portainer novo pode exigir um "setup token" na criação do admin — ele é impresso
-  # nos LOGS do container (prova de que você é o dono do servidor). Mostra se achar.
-  if [[ "$DRY" != "--dry-run" ]]; then
-    sleep 8
-    local ptok; ptok=$(docker service logs portainer_portainer 2>&1 | grep -i 'token' | tail -1 || true)
-    [[ -n "$ptok" ]] && say "  ${AMB}→ Código de segurança do Portainer (se a tela pedir):${C0}\n    ${DIM}${ptok}${C0}"
-  fi
-  info "se a tela do Portainer pedir 'setup token', pegue com: docker service logs portainer_portainer 2>&1 | grep -i token"
-  info "e lembre: o admin precisa ser criado em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
-
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
   # DOCKER-USER, e precisa sobreviver a reboot (script + unit systemd).
   cat > "${D}/usr/local/sbin/gestao-lockdown.sh" <<'EOF'
@@ -573,8 +619,19 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
   run "systemctl daemon-reload && systemctl enable --now gestao-lockdown.service >/dev/null 2>&1"
-  ok "Portainer: ${BOLD}http://${TSIP}:9000${C0} ${DIM}(SÓ com Tailscale ligado; crie o admin no 1º acesso — expira em 5min)${C0}"
-  info "do IP público, as portas de gestão simplesmente não respondem (DROP na DOCKER-USER, persistente)"
+  ok "Firewall de gestão ativo ${DIM}(persistente a reboot)${C0}"
+  sub "do IP público as portas 9000/18789 nem respondem — só pela tailnet"
+
+  # Portainer novo pode exigir um "setup token" na criação do admin — ele é impresso
+  # nos LOGS do container (prova de que você é o dono do servidor). Mostra se achar.
+  if [[ "$DRY" != "--dry-run" ]]; then
+    sleep 8
+    local ptok; ptok=$(docker service logs portainer_portainer 2>&1 | grep -i 'token' | tail -1 || true)
+    [[ -n "$ptok" ]] && { warn "código de segurança do Portainer (se a tela pedir):"; sub "${ptok}"; } || true
+  fi
+  ok "Portainer: ${BOLD}http://${TSIP}:9000${C0}"
+  sub "crie o admin em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
+  sub "se pedir 'setup token': docker service logs portainer_portainer 2>&1 | grep -i token"
   cred ""; cred "Portainer (gestão, só-tailnet): http://${TSIP}:9000"
   cred "IP tailnet do servidor: ${TSIP}"
 }
@@ -582,7 +639,7 @@ EOF
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
 claude_code(){
   ETAPA="Claude Code"
-  say "\n${BOLD}[7/9] Claude Code — pronto pra receber ordens${C0}"
+  etapa "7/9" "CLAUDE CODE" "o programador desta VPS, pronto pra receber ordens"
   if ! command -v node >/dev/null || [[ "$(node -v 2>/dev/null | grep -oP '\d+' | head -1)" -lt 20 ]]; then
     info "instalando Node.js 22 (NodeSource)…"
     run "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 && apt-get install -y nodejs >/dev/null 2>&1"
@@ -606,15 +663,20 @@ claude_code(){
     git config --global user.email "${LE_EMAIL}" >/dev/null 2>&1 || true
     git config --global init.defaultBranch main >/dev/null 2>&1 || true
   fi
-  command -v gh >/dev/null && ok "git + GitHub CLI prontos ${DIM}(pra versionar: gh auth login — login pelo navegador, sem colar token)${C0}" \
-    || warn "GitHub CLI não instalou agora — depois: apt-get install -y gh"
+  if command -v gh >/dev/null; then
+    ok "git + GitHub CLI prontos"
+    sub "pra versionar: gh auth login — login pelo navegador, sem colar token"
+  else
+    warn "GitHub CLI não instalou agora — depois: apt-get install -y gh"
+  fi
+
   if ! command -v claude >/dev/null; then
     info "instalando Claude Code…"
     # falha aqui NÃO derruba a infra — dá pra instalar depois
     run "npm install -g @anthropic-ai/claude-code >/dev/null 2>&1" \
       || warn "não consegui instalar o Claude Code agora — depois rode: npm install -g @anthropic-ai/claude-code"
   fi
-  command -v claude >/dev/null && ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo instalado)"
+  command -v claude >/dev/null && ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo instalado)" || true
 
   # credencial: setup-token (sk-ant-oat…) vira CLAUDE_CODE_OAUTH_TOKEN; chave API vira ANTHROPIC_API_KEY
   mkdir -p "${D}/etc/profile.d"
@@ -623,9 +685,10 @@ claude_code(){
     [[ "$CLTOK" == sk-ant-oat* ]] && VARNAME="CLAUDE_CODE_OAUTH_TOKEN"
     printf 'export %s=%q\n' "$VARNAME" "$CLTOK" > "${D}/etc/profile.d/claude-cred.sh"
     chmod 600 "${D}/etc/profile.d/claude-cred.sh"
-    ok "Credencial gravada (${VARNAME}) — sessões novas de shell já nascem autenticadas"
+    ok "Credencial gravada ${DIM}(${VARNAME})${C0}"
+    sub "sessões novas de shell já nascem autenticadas"
   else
-    warn "Sem token do Claude — rode ${BOLD}claude${C0} uma vez e faça login pelo link (ou cole um setup-token depois)."
+    warn "sem token do Claude — rode ${BOLD}claude${C0} uma vez e faça login pelo link"
   fi
 
   # CLAUDE.md: o Claude desta VPS nasce SABENDO a infra (e o projeto, se houver semente)
@@ -634,7 +697,8 @@ claude_code(){
     sed -e "s/{{SLUG}}/${SLUG}/g" -e "s/{{PROJ_NAME}}/${PROJ_NAME}/g" \
         -e "s/{{APP_DOMAIN}}/${APP_DOMAIN}/g" -e "s/{{DATA}}/$(date '+%Y-%m-%d')/g" \
         "${SEED_DIR}/CLAUDE.md" > "${D}/opt/CLAUDE.md"
-    ok "CLAUDE.md da semente '${SEED}' semeado em /opt — o Claude daqui já nasce sabendo o projeto"
+    ok "CLAUDE.md da semente ${BOLD}${SEED}${C0} semeado em /opt"
+    sub "o Claude daqui já nasce sabendo o projeto inteiro"
   else
     cat > "${D}/opt/CLAUDE.md" <<EOF
 # ${PROJ_NAME} — VPS (vibe stack, instalada em $(date '+%Y-%m-%d') via get.motobot.com.br/vibe)
@@ -670,7 +734,8 @@ antes de criar qualquer coisa.
 - Commitar mudanças relevantes (git) e reportar resultado real, inclusive falhas.
 - Segredo novo = docker secret; nunca hardcode, nunca .env commitado.
 EOF
-    ok "CLAUDE.md da infra semeado em /opt — o Claude daqui já nasce sabendo o servidor"
+    ok "CLAUDE.md da infra semeado em /opt"
+    sub "o Claude daqui já nasce sabendo o servidor"
   fi
   # gestão futura de DNS: o Claude da VPS precisa saber onde mora o token
   if [[ -n "$CFTOK" ]]; then
@@ -688,9 +753,9 @@ EOF
 # ── etapa 8: moltbot (agente pessoal) ────────────────────────────────────────
 moltbot_stack(){
   ETAPA="moltbot"
-  say "\n${BOLD}[8/9] Moltbot — agente pessoal (OpenClaw)${C0}"
-  [[ "$QUER_MOLT" =~ ^[sS] ]] || { info "pulado — instale depois rodando o script de novo"; return; }
-  [[ "$(uname -m)" != "x86_64" ]] && warn "processador $(uname -m): a imagem do moltbot pode não existir pra essa arquitetura"
+  etapa "8/9" "MOLTBOT" "agente pessoal (OpenClaw) — opcional"
+  [[ "$QUER_MOLT" =~ ^[sS] ]] || { info "pulado ${DIM}(instale depois rodando o script de novo)${C0}"; return; }
+  [[ "$(uname -m)" != "x86_64" ]] && warn "processador $(uname -m): a imagem do moltbot pode não existir pra essa arquitetura" || true
   local GWTOK; GWTOK=$(pw)$(pw)
   mkdir -p "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/moltbot.yml" <<EOF
@@ -721,22 +786,22 @@ volumes:
 EOF
   chmod 600 "${D}/opt/${SLUG}/moltbot.yml"   # contém token/chave — root-only
   run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot >/dev/null 2>&1"
-  ok "Moltbot no ar — painel: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789/?token=${GWTOK}${C0} ${DIM}(só com Tailscale ligado)${C0}"
-  info "1º acesso: o browser vira device 'Pending' — aprove com: docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot devices approve <requestId>"
+  ok "Moltbot no ar: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789/?token=${GWTOK}${C0}"
+  sub "1º acesso: o browser vira device 'Pending' — aprove com:"
+  sub "docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot devices approve <requestId>"
   if [[ -n "$MOLT_TG" ]]; then
-    info "conectar o Telegram: docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot channels add --channel telegram --token ${MOLT_TG}"
-    info "depois: docker service update --force moltbot_moltbot  (NUNCA docker restart — vira zumbi no Swarm)"
+    sub "conectar o Telegram: docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot channels add --channel telegram --token ${MOLT_TG}"
+    sub "depois: docker service update --force moltbot_moltbot (NUNCA docker restart)"
   fi
   cred ""; cred "Moltbot (gestão, só-tailnet): http://${TSIP:-<ip-tailnet>}:18789"
   cred "  gateway token (CONTROLE TOTAL — não compartilhar): ${GWTOK}"
-  # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
   [[ -n "$MOLT_TG" ]] && cred "  bot Telegram: token informado (conectar via 'clawdbot channels add')" || true
 }
 
 # ── etapa 9: backup ──────────────────────────────────────────────────────────
 backup_cron(){
   ETAPA="backup"
-  say "\n${BOLD}[9/9] Backup do banco — desde o dia um${C0}"
+  etapa "9/9" "BACKUP" "dump do banco todo dia, desde o dia um"
   mkdir -p "${D}/var/backups/${SLUG}" "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/backup.sh" <<EOF
 #!/usr/bin/env bash
@@ -757,16 +822,18 @@ EOF
     command -v cron >/dev/null 2>&1 || apt-get install -y cron >/dev/null 2>&1 || true
     systemctl enable --now cron >/dev/null 2>&1 || true
   fi
-  ok "pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14 dias, via /etc/cron.d/${SLUG}-backup)"
-  warn "Backup LOCAL não salva de disco morto: rode também a blindagem c/ envio pra nuvem:"
-  say "     ${BOLD}bash <(curl -fsSL https://get.motobot.com.br/guard)${C0}"
+  ok "pg_dump diário às 03:10 → /var/backups/${SLUG}"
+  sub "retenção 14 dias · agendado em /etc/cron.d/${SLUG}-backup"
+  warn "backup LOCAL não salva de disco morto — rode também a blindagem com envio pra nuvem:"
+  sub "bash <(curl -fsSL https://get.motobot.com.br/guard)"
 }
 
 # ── prova real: conferir que tudo REALMENTE subiu ────────────────────────────
 prova_real(){
   ETAPA="prova real"
   [[ "$DRY" == "--dry-run" ]] && return 0
-  say "\n${BOLD}Prova real — conferindo tudo que subiu:${C0}"
+  say ""
+  say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
   local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
@@ -785,8 +852,8 @@ prova_real(){
   for s in $esperados; do
     rep=$(docker service ls --format '{{.Name}} {{.Replicas}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')
     have="${rep%%/*}"; want="${rep##*/}"; want="${want%% *}"
-    if [[ -n "$rep" && "$have" == "$want" && "$have" != "0" ]]; then ok "$s ($rep)"
-    else warn "$s ainda não está de pé (${rep:-não existe}) — investigar: docker service ps $s --no-trunc"
+    if [[ -n "$rep" && "$have" == "$want" && "$have" != "0" ]]; then ok "${s} ${DIM}${rep}${C0}"
+    else warn "${s} ainda não está de pé ${DIM}(${rep:-não existe})${C0}"; sub "investigar: docker service ps ${s} --no-trunc"
     fi
   done
   # banco responde e (se semente) tabelas existem
@@ -794,11 +861,11 @@ prova_real(){
   if [[ -n "$CID" ]] && docker exec "$CID" pg_isready -U postgres >/dev/null 2>&1; then
     local nt; nt=$(docker exec "$CID" psql -U postgres -d "${SLUG}" -tAc \
       "select count(*) from information_schema.tables where table_schema='${SLUG}'" 2>/dev/null | tr -d ' ')
-    if [[ -n "$SEED" ]]; then ok "Banco respondendo — ${nt:-?} tabelas no schema ${SLUG}"
-    else ok "Banco respondendo (schema virgem, como planejado)"
+    if [[ -n "$SEED" ]]; then ok "Banco respondendo ${DIM}${nt:-?} tabelas no schema ${SLUG}${C0}"
+    else ok "Banco respondendo ${DIM}schema virgem, como planejado${C0}"
     fi
   else
-    warn "Banco não respondeu ao teste — investigar: docker service ps ${SLUG}_postgres"
+    warn "banco não respondeu ao teste"; sub "investigar: docker service ps ${SLUG}_postgres"
   fi
   command -v claude >/dev/null && ok "Claude Code no PATH" || warn "Claude Code não encontrado no PATH"
 }
@@ -806,18 +873,25 @@ prova_real(){
 # ── resumo ───────────────────────────────────────────────────────────────────
 resumo(){
   ETAPA="resumo final"
-  say "\n${GRN}${BOLD}═══ Fundação do ${PROJ_NAME} pronta ═══${C0}\n"
-  say "  Projeto:     ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
-  say "  Gestão:      ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — SÓ com Tailscale ligado)${C0}"
-  say "  Banco:       ${SLUG}_postgres (db ${SLUG}, pgvector${SEED:+, schema da semente '${SEED}'})"
-  say "  Fila/sessão: ${SLUG}_redis"
-  say "  Credenciais: ${BOLD}/root/${SLUG}-credenciais.txt${C0} ${DIM}(chmod 600 — anote num gerenciador de senhas e apague)${C0}"
   say ""
-  say "  ${BOLD}Pra começar a construir:${C0}"
-  say "   ${LRJ}cd /opt && claude${C0}   ${DIM}← o CLAUDE.md daqui já apresenta o servidor pra ele${C0}"
+  say "  ${GRN}$(regua $LARGURA)${C0}"
+  say "  ${GRN}${BOLD}  FUNDAÇÃO DO ${PROJ_NAME^^} PRONTA${C0}"
+  say "  ${GRN}$(regua $LARGURA)${C0}"
+  say ""
+  say "     ${DIM}projeto ······${C0} ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
+  say "     ${DIM}gestão ·······${C0} ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
+  say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
+  say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"
+  say "     ${DIM}credenciais ··${C0} ${BOLD}/root/${SLUG}-credenciais.txt${C0}"
+  say "       ${DIM}└ chmod 600 — anote num gerenciador de senhas e apague o arquivo${C0}"
+  say ""
+  say "  ${CHIP} PRÓXIMO PASSO ${C0}"
+  say ""
+  say "     ${LRJ}${BOLD}cd /opt && claude${C0}"
+  say "       ${DIM}└ o CLAUDE.md daqui já apresenta o servidor pra ele — é só mandar construir${C0}"
   say ""
   # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
-  [[ "$DRY" == "--dry-run" ]] && warn "Foi um dry-run: nada foi alterado no servidor (escritas em ${D})." || true
+  [[ "$DRY" == "--dry-run" ]] && warn "foi um dry-run: nada foi alterado no servidor (escritas em ${D})" || true
 }
 
 banner
