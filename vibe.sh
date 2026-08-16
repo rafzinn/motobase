@@ -588,6 +588,26 @@ claude_code(){
     run "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 && apt-get install -y nodejs >/dev/null 2>&1"
   fi
   ok "Node $(node -v 2>/dev/null || echo '(dry-run)')"
+
+  # git + gh: FERRAMENTA de versionamento. A credencial NÃO é pedida aqui —
+  # 'gh auth login' faz login pelo navegador (device flow), sem colar segredo no terminal.
+  if ! command -v git >/dev/null || ! command -v gh >/dev/null; then
+    info "instalando git e GitHub CLI…"
+    run "apt-get install -y git >/dev/null 2>&1 || true"
+    if ! command -v gh >/dev/null; then
+      run "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null 2>&1 \
+        && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+        && echo 'deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list \
+        && apt-get update >/dev/null 2>&1 && apt-get install -y gh >/dev/null 2>&1 || true"
+    fi
+  fi
+  if [[ "$DRY" != "--dry-run" ]] && command -v git >/dev/null; then
+    git config --global user.name "${PROJ_NAME}" >/dev/null 2>&1 || true
+    git config --global user.email "${LE_EMAIL}" >/dev/null 2>&1 || true
+    git config --global init.defaultBranch main >/dev/null 2>&1 || true
+  fi
+  command -v gh >/dev/null && ok "git + GitHub CLI prontos ${DIM}(pra versionar: gh auth login — login pelo navegador, sem colar token)${C0}" \
+    || warn "GitHub CLI não instalou agora — depois: apt-get install -y gh"
   if ! command -v claude >/dev/null; then
     info "instalando Claude Code…"
     # falha aqui NÃO derruba a infra — dá pra instalar depois
@@ -638,6 +658,13 @@ antes de criar qualquer coisa.
   \`tailnet-only\` + priority 2000 (exemplo comentado no app.yml).
 - Backup: pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14d). Offsite: guard
   (bash <(curl -fsSL https://get.motobot.com.br/guard)).
+
+## Versionamento (fazer no PRIMEIRO código que existir)
+- git e GitHub CLI já instalados. NÃO existe token guardado aqui — autenticar com
+  \`gh auth login\` (login pelo navegador, device flow, escopo mínimo).
+- Depois: \`gh repo create ${SLUG} --private --source=. --remote=origin --push\`.
+- Commitar cedo e sempre; .gitignore deve excluir .env, credenciais e dumps.
+  NUNCA commitar segredo — segredo vive em docker secret.
 
 ## Postura
 - Commitar mudanças relevantes (git) e reportar resultado real, inclusive falhas.
