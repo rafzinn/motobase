@@ -650,12 +650,15 @@ docker exec "\$CID" pg_dump -U postgres -d ${SLUG} | gzip > "\${DEST}/${SLUG}-\$
 find "\$DEST" -name '${SLUG}-*.sql.gz' -mtime +14 -delete
 EOF
   chmod +x "${D}/opt/${SLUG}/backup.sh"
-  if [[ "$DRY" == "--dry-run" ]]; then
-    say "  ${DIM}[dry-run] instalaria cron 03:10 → /opt/${SLUG}/backup.sh${C0}"
-  else
-    ( crontab -l 2>/dev/null | grep -v "${SLUG}/backup.sh"; echo "10 3 * * * /opt/${SLUG}/backup.sh >> /var/log/${SLUG}-backup.log 2>&1" ) | crontab -
+  # /etc/cron.d em vez de 'crontab -': não depende de crontab pré-existente (VM/VPS virgem não tem)
+  mkdir -p "${D}/etc/cron.d"
+  printf '10 3 * * * root /opt/%s/backup.sh >> /var/log/%s-backup.log 2>&1\n' "$SLUG" "$SLUG" > "${D}/etc/cron.d/${SLUG}-backup"
+  chmod 644 "${D}/etc/cron.d/${SLUG}-backup"
+  if [[ "$DRY" != "--dry-run" ]]; then
+    command -v cron >/dev/null 2>&1 || apt-get install -y cron >/dev/null 2>&1 || true
+    systemctl enable --now cron >/dev/null 2>&1 || true
   fi
-  ok "pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14 dias)"
+  ok "pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14 dias, via /etc/cron.d/${SLUG}-backup)"
   warn "Backup LOCAL não salva de disco morto: rode também a blindagem c/ envio pra nuvem:"
   say "     ${BOLD}bash <(curl -fsSL https://get.motobot.com.br/guard)${C0}"
 }
