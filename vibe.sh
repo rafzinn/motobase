@@ -60,6 +60,15 @@ ask(){ local __v=$1 __p=$2 __d=${3:-}; local r
   printf -v "$__v" '%s' "${r:-$__d}"; }
 pw(){ openssl rand -base64 18 | tr -d '/+=' | head -c 20; }
 
+swarm_secret(){
+  local name="$1" value="$2"
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] criaria Docker secret ${name}${C0}"
+  else
+    printf '%s' "$value" | docker secret create "$name" - >/dev/null
+  fi
+}
+
 # bloco de destaque (avisos que o usuário PRECISA ler) — barra lateral, sem
 # borda direita: fechar caixa com texto colorido exigiria contar bytes ANSI
 caixa_abre(){ say ""; say "     ${AMB}▛$(regua $((LARGURA-6)))${C0}"; }
@@ -90,16 +99,32 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""
+DRY=""; SEED=""; BASE_ONLY=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
+  --base) BASE_ONLY="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
 D=""   # prefixo de escrita: em dry-run, NADA toca o disco real
 if [[ "$DRY" == "--dry-run" ]]; then D=$(mktemp -d); fi
-run(){ if [[ "$DRY" == "--dry-run" ]]; then say "       ${DIM}[dry-run] $*${C0}"; else eval "$@"; fi; }
+run(){
+  if [[ "$DRY" == "--dry-run" ]]; then
+    if [[ "$*" == *"docker secret create"* ]]; then
+      local secret_name
+      secret_name=$(printf '%s' "$*" | sed -nE 's/.*docker secret create ([^ ]+).*/\1/p')
+      say "       ${DIM}[dry-run] criaria Docker secret ${secret_name:-protegido}${C0}"
+    else
+      say "       ${DIM}[dry-run] $*${C0}"
+    fi
+  else
+    eval "$@"
+  fi
+}
+
+TOTAL_STEPS=9
+[[ -n "$BASE_ONLY" ]] && TOTAL_STEPS=8
 
 banner(){
   say ""
@@ -110,7 +135,7 @@ banner(){
   say "   ${LRJ_ESC} ╚████╔╝ ██║██████╔╝███████╗${C0}"
   say "   ${LRJ_ESC}  ╚═══╝  ╚═╝╚═════╝ ╚══════╝${C0}"
   say ""
-  say "   ${CHIP} S T A C K ${C0}  ${BOLD}sua startup enxuta, em uma linha${C0}"
+  say "   ${CHIP} M O T O B A S E ${C0}  ${BOLD}uma base · muitos projetos · tudo no lugar${C0}"
   say "   ${DIM}por Rafael Ventura × Fable 5${SEED:+  ·  semente: ${SEED}}${C0}"
   say "  ${DIM}$(regua $LARGURA)${C0}"
 }
@@ -118,7 +143,7 @@ banner(){
 # ── checagens ────────────────────────────────────────────────────────────────
 preflight(){
   ETAPA="checagens iniciais"
-  etapa "0/9" "PREPARAÇÃO" "conferindo se este servidor está apto"
+  etapa "0/${TOTAL_STEPS}" "PREPARAÇÃO" "conferindo se este servidor está apto"
   [[ $EUID -eq 0 ]] || die "Rode como root (digite: sudo -i  e depois rode o comando de novo)."
   command -v apt-get >/dev/null || die "Este instalador suporta Ubuntu/Debian (apt)."
 
@@ -219,11 +244,12 @@ cf_dns_auto(){
 # ── etapa 1: questionário — TUDO de uma vez, depois o script trabalha sozinho ─
 questionario(){
   ETAPA="questionário"
-  etapa "1/9" "QUESTIONÁRIO" "responde tudo agora e vai tomar um café · Enter pula credencial"
+  etapa "1/${TOTAL_STEPS}" "QUESTIONÁRIO" "responde tudo agora e vai tomar um café · Enter pula credencial"
 
   while true; do
     ask PROJ_NAME "Nome do projeto/startup"
-    SLUG=$(echo "${PROJ_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+    SLUG=$(printf '%s' "${PROJ_NAME}" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
+      | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' || true)
     SLUG=${SLUG:0:24}
     # nome de schema/serviço precisa começar com LETRA (Postgres recusa começar por número)
     [[ "$SLUG" =~ ^[a-z] ]] && break
@@ -273,8 +299,8 @@ questionario(){
   ask_tok OAKEY "Chave da OpenAI" '^sk-' "sk-proj-…"
 
   say ""
-  say "     ${BOLD}Telegram${C0} ${DIM}— se o produto for ter bot${C0}"
-  sub "fale com o @BotFather, mande /newbot e copie o token"
+  say "     ${BOLD}Telegram${C0} ${DIM}— alertas de saúde e backup da VPS${C0}"
+  sub "fale com o @BotFather, mande /newbot e copie o token; Enter pula"
   link "https://t.me/BotFather"
   ask_tok TGTOK "Token do bot Telegram" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
 
@@ -285,9 +311,12 @@ questionario(){
   ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…"
 
   say ""
-  ask QUER_MOLT "Instalar o moltbot (agente pessoal OpenClaw)? (s/n)" "n"
+  QUER_MOLT="n"
   MOLT_TG=""
-  if [[ "$QUER_MOLT" =~ ^[sS] ]]; then
+  if [[ -z "$BASE_ONLY" ]]; then
+    ask QUER_MOLT "Instalar o moltbot (agente pessoal OpenClaw)? (s/n)" "n"
+  fi
+  if [[ -z "$BASE_ONLY" && "$QUER_MOLT" =~ ^[sS] ]]; then
     sub "um bot do Telegram só roda em UM servidor — se o seu moltbot atual já usa"
     sub "um bot em outra VPS, crie um bot NOVO no @BotFather pra este"
     ask_tok MOLT_TG "Token do bot Telegram do moltbot" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
@@ -314,7 +343,9 @@ questionario(){
   m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "       ${DIM}openai ·····${C0} ${m}"
   m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "       ${DIM}telegram ···${C0} ${m}"
   m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="${TSKEY:0:14}…"; say "       ${DIM}tailscale ··${C0} ${m}"
-  m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim";      say "       ${DIM}moltbot ····${C0} ${m}"
+  if [[ -z "$BASE_ONLY" ]]; then
+    m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim"; say "       ${DIM}moltbot ····${C0} ${m}"
+  fi
   say "  ${DIM}$(regua $LARGURA)${C0}"
   ask CONF "Tudo certo? (s = bora / n = responder de novo)" "s"
   [[ "$CONF" =~ ^[sS] ]] || { questionario; return; }
@@ -339,7 +370,11 @@ questionario(){
 # ── etapa 2: docker + swarm ──────────────────────────────────────────────────
 docker_swarm(){
   ETAPA="Docker + Swarm"
-  etapa "2/9" "DOCKER + SWARM" "o motor que roda tudo, com auto-restart"
+  etapa "2/${TOTAL_STEPS}" "DOCKER + SWARM" "o motor que roda tudo, com auto-restart"
+  if ! command -v jq >/dev/null || ! command -v openssl >/dev/null; then
+    info "instalando utilitários básicos…"
+    run "apt-get update >/dev/null 2>&1 && apt-get install -y ca-certificates curl jq openssl >/dev/null 2>&1"
+  fi
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     run "curl -fsSL https://get.docker.com | sh >/dev/null 2>&1"
@@ -357,7 +392,7 @@ docker_swarm(){
 # ── etapa 3: traefik ─────────────────────────────────────────────────────────
 traefik_stack(){
   ETAPA="Traefik (HTTPS)"
-  etapa "3/9" "TRAEFIK" "o porteiro: HTTPS automático pra todo serviço novo"
+  etapa "3/${TOTAL_STEPS}" "TRAEFIK" "o porteiro: HTTPS automático pra todo serviço novo"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
     ok "Traefik já existe neste Swarm — mantendo o que está no ar"
     return
@@ -404,10 +439,10 @@ EOF
 # ── etapa 4: banco + redis (CRUS — schema é com você e o Claude) ─────────────
 dados_stack(){
   ETAPA="banco de dados"
-  etapa "4/9" "DADOS" "Postgres com pgvector + Redis, fora do alcance da internet"
+  etapa "4/${TOTAL_STEPS}" "DADOS" "Postgres com pgvector + Redis, fora do alcance da internet"
   local PGP; PGP=$(pw)
   if ! docker secret inspect "${SLUG}_pg_password" >/dev/null 2>&1; then
-    run "printf '%s' '${PGP}' | docker secret create ${SLUG}_pg_password - >/dev/null"
+    swarm_secret "${SLUG}_pg_password" "$PGP"
   else
     warn "secret ${SLUG}_pg_password já existe — mantendo a senha atual"
     PGP="(já existia — veja o registro anterior)"
@@ -473,18 +508,24 @@ banco_pronto(){
 # ── etapa 5: secrets da aplicação (já respondidos no questionário) ───────────
 app_secrets(){
   ETAPA="secrets da aplicação"
-  etapa "5/9" "SECRETS" "segredos guardados pelo Swarm, nunca em texto no código"
+  etapa "5/${TOTAL_STEPS}" "SECRETS" "segredos guardados pelo Swarm, nunca em texto no código"
   if [[ -n "$TGTOK" ]] && ! docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1; then
-    run "printf '%s' '${TGTOK}' | docker secret create ${SLUG}_tg_token - >/dev/null"
+    swarm_secret "${SLUG}_tg_token" "$TGTOK"
     ok "${SLUG}_tg_token"
   fi
   if [[ -n "$OAKEY" ]] && ! docker secret inspect "${SLUG}_openai_key" >/dev/null 2>&1; then
-    run "printf '%s' '${OAKEY}' | docker secret create ${SLUG}_openai_key - >/dev/null"
+    swarm_secret "${SLUG}_openai_key" "$OAKEY"
     ok "${SLUG}_openai_key"
+  fi
+  if [[ -n "$BASE_ONLY" ]]; then
+    cred ""; cred "Secrets da fundação no Swarm: ${SLUG}_pg_password${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}"
+    ok "Credenciais opcionais da fundação guardadas"
+    sub "nenhuma aplicação foi criada"
+    return
   fi
   local JWTS; JWTS=$(pw)$(pw)
   if ! docker secret inspect "${SLUG}_jwt_secret" >/dev/null 2>&1; then
-    run "printf '%s' '${JWTS}' | docker secret create ${SLUG}_jwt_secret - >/dev/null"
+    swarm_secret "${SLUG}_jwt_secret" "$JWTS"
     ok "${SLUG}_jwt_secret ${DIM}(login/sessões da sua app)${C0}"
   fi
   cred ""; cred "Secrets no Swarm: ${SLUG}_pg_password, ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}"
@@ -534,7 +575,7 @@ EOF
 # ── etapa 6: tailscale + gestão só-tailnet ───────────────────────────────────
 tailscale_gestao(){
   ETAPA="Tailscale + Portainer"
-  etapa "6/9" "TAILSCALE" "painéis de gestão fora da internet pública"
+  etapa "6/${TOTAL_STEPS}" "TAILSCALE" "painéis de gestão fora da internet pública"
   info "Portainer só abre com o Tailscale ligado no SEU dispositivo"
   if ! command -v tailscale >/dev/null; then
     info "instalando Tailscale (script oficial)…"
@@ -639,7 +680,7 @@ EOF
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
 claude_code(){
   ETAPA="Claude Code"
-  etapa "7/9" "CLAUDE CODE" "o programador desta VPS, pronto pra receber ordens"
+  etapa "7/${TOTAL_STEPS}" "CLAUDE CODE" "o programador desta VPS, pronto pra receber ordens"
   if ! command -v node >/dev/null || [[ "$(node -v 2>/dev/null | grep -oP '\d+' | head -1)" -lt 20 ]]; then
     info "instalando Node.js 22 (NodeSource)…"
     run "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 && apt-get install -y nodejs >/dev/null 2>&1"
@@ -801,7 +842,9 @@ EOF
 # ── etapa 9: backup ──────────────────────────────────────────────────────────
 backup_cron(){
   ETAPA="backup"
-  etapa "9/9" "BACKUP" "dump do banco todo dia, desde o dia um"
+  local step=9
+  [[ -n "$BASE_ONLY" ]] && step=8
+  etapa "${step}/${TOTAL_STEPS}" "BACKUP" "dump do banco todo dia, desde o dia um"
   mkdir -p "${D}/var/backups/${SLUG}" "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/backup.sh" <<EOF
 #!/usr/bin/env bash
@@ -894,6 +937,24 @@ resumo(){
   [[ "$DRY" == "--dry-run" ]] && warn "foi um dry-run: nada foi alterado no servidor (escritas em ${D})" || true
 }
 
+registrar_base(){
+  [[ "$DRY" == "--dry-run" || -z "$BASE_ONLY" ]] && return 0
+  mkdir -p /etc/motobase
+  {
+    printf 'BASE_NAME=%q\n' "$PROJ_NAME"
+    printf 'BASE_SLUG=%q\n' "$SLUG"
+    printf 'BASE_DOMAIN=%q\n' "$APP_DOMAIN"
+    printf 'LE_EMAIL=%q\n' "$LE_EMAIL"
+    printf 'TAILSCALE_IP=%q\n' "${TSIP:-}"
+    printf 'CERT_RESOLVER=%q\n' "le"
+    printf 'INSTALLED_AT=%q\n' "$(date -Iseconds)"
+  } > /etc/motobase/base.env
+  chmod 600 /etc/motobase/base.env
+  touch /etc/motobase/projects.tsv
+  chmod 600 /etc/motobase/projects.tsv
+  ok "Fundação registrada — nas próximas execuções este curl abre o gerenciador"
+}
+
 banner
 preflight
 questionario
@@ -903,7 +964,8 @@ dados_stack
 app_secrets
 tailscale_gestao
 claude_code
-moltbot_stack
+[[ -z "$BASE_ONLY" ]] && moltbot_stack
 backup_cron
 prova_real
+registrar_base
 resumo

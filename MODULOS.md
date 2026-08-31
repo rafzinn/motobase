@@ -6,8 +6,9 @@
 ## Módulo 1 — A Fundação (uma linha) `← você está aqui`
 
 Uma linha no terminal e sua VPS vira infraestrutura de produção:
-Docker Swarm, Traefik com HTTPS automático, Portainer, e as stacks que você
-escolher (WordPress, PostgreSQL, Redis, n8n, sites estáticos).
+Docker Swarm, Traefik com HTTPS automático, Portainer só pela Tailnet,
+PostgreSQL com pgvector, Redis e backup. A fundação nasce uma vez; depois o
+mesmo comando cria sites simples ou WordPress em stacks independentes.
 
 ```bash
 bash <(curl -fsSL https://get.motobot.com.br)
