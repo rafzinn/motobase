@@ -56,3 +56,5 @@ button[class*="023959"]{display:none!important}
   content:"Gerenciador de Containers";
   font-size:10px; letter-spacing:.06em; font-weight:500; color:#C3BDA9;
 }
+/* tema escuro nativo: neutros quentes (o resto herda das primitivas re-pintadas) */
+[theme="dark"] .btn-default,[theme="dark"] .btn-light{background-color:#2B2822!important;border-color:#4A4436!important;color:#F2F0E9!important}
