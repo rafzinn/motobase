@@ -107,10 +107,10 @@ say "  Guia oficial: ${BOLD}https://developers.cloudflare.com/r2/get-started/s3/
 say ""
 ask WANTBK "Configurar o backup agora? (s/n)" "s"
 if [[ "$WANTBK" =~ ^[sS] ]]; then
-  asksecret R2_ENDPOINT "Endpoint S3 do R2 (oculto na gravação)"
+  ask R2_ENDPOINT "Endpoint S3 do R2"
   ask R2_BUCKET "Nome do bucket" "backups"
-  asksecret R2_KEY "Access Key ID (não aparece ao digitar)"
-  asksecret R2_SECRET "Secret Access Key (não aparece ao digitar)"
+  ask R2_KEY "Access Key ID"
+  asksecret R2_SECRET "Secret Access Key (aparece como asteriscos)"
   apt-get install -y -qq awscli >/dev/null 2>&1 || pip3 install -q awscli 2>/dev/null || die "Não consegui instalar aws-cli."
   mkdir -p /opt/motobase-guard
   cat > /opt/motobase-guard/r2.env <<EOF
