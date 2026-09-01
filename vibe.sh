@@ -449,8 +449,20 @@ docker_swarm(){
   fi
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
-    run "curl -fsSL https://get.docker.com | sh >/dev/null 2>&1"
+    if [[ "$DRY" == "--dry-run" ]]; then
+      run "curl -fsSL https://get.docker.com | sh"
+    else
+      local docker_log="/tmp/motobase-docker-install.log"
+      if ! curl -fsSL https://get.docker.com | sh >"$docker_log" 2>&1; then
+        warn "o instalador oficial do Docker retornou erro"
+        sub "últimas linhas do diagnóstico:"
+        tail -n 18 "$docker_log" >&2 || true
+        sub "log completo preservado em: ${docker_log}"
+        die "Não foi possível instalar o Docker. Corrija a causa acima e rode o MESMO comando de novo."
+      fi
+    fi
   fi
+  command -v docker >/dev/null || die "O instalador terminou, mas o comando docker não apareceu. Veja /tmp/motobase-docker-install.log e rode o mesmo comando de novo."
   ok "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo instalado)"
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" != "active" ]]; then
     run "docker swarm init --advertise-addr ${IP} >/dev/null"
