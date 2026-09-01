@@ -192,7 +192,7 @@ cloudflare_token(){
   local token_file="/root/.config/cloudflare/token" token=""
   [[ -r "$token_file" ]] && token=$(<"$token_file")
   if [[ -z "$token" ]]; then
-    ask_secret token "Token Cloudflare para criar o DNS automaticamente"
+    ask token "Token Cloudflare para criar o DNS automaticamente"
     if [[ -n "$token" && -z "$DRY" ]]; then
       install -d -m 700 /root/.config/cloudflare
       printf '%s\n' "$token" > "$token_file"

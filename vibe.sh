@@ -92,12 +92,12 @@ caixa_abre(){ say ""; say "     ${AMB}▛$(regua $((LARGURA-6)))${C0}"; }
 caixa_txt(){  say "     ${AMB}▌${C0} $*"; }
 caixa_fecha(){ say "     ${AMB}▙$(regua $((LARGURA-6)))${C0}"; say ""; }
 
+# Token fica visível para conferência e copy/paste; senhas usam read_masked.
 # pergunta token com validação de formato; Enter pula
 ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
   local v
   while true; do
-    read_masked "$2"
-    v="$REPLY"
+    read -r -p "$(echo -e "     ${LRJ}?${C0} ${2} ${DIM}(cole aqui · Enter pula)${C0}: ")" v || true
     [[ -z "$v" ]] && break
     [[ "$v" =~ $3 ]] && break
     warn "esse valor não parece certo — esperado algo como: ${4}"
@@ -406,11 +406,11 @@ questionario(){
   say "       ${DIM}projeto ····${C0} ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
   say "       ${DIM}domínio ····${C0} https://${APP_DOMAIN}"
   say "       ${DIM}e-mail ·····${C0} ${LE_EMAIL}"
-  m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="informado ${DIM}(oculto · DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="informado ${DIM}(oculto)${C0}"; say "       ${DIM}claude ·····${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="informado ${DIM}(oculto)${C0}";  say "       ${DIM}openai ·····${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="informado ${DIM}(oculto)${C0}";  say "       ${DIM}telegram ···${C0} ${m}"
-  m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="informado ${DIM}(oculto)${C0}"; say "       ${DIM}tailscale ··${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="informado ${DIM}(DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="informado"; say "       ${DIM}claude ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="informado";  say "       ${DIM}openai ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="informado";  say "       ${DIM}telegram ···${C0} ${m}"
+  m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="informado"; say "       ${DIM}tailscale ··${C0} ${m}"
   if [[ -z "$BASE_ONLY" ]]; then
     m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim"; say "       ${DIM}moltbot ····${C0} ${m}"
   fi
