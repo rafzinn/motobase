@@ -68,6 +68,10 @@ O token de DNS da Cloudflare e as credenciais do R2 são independentes. O
 monitor externo via Cloudflare Worker ainda não é provisionado pelo wizard;
 ele é uma integração separada.
 
+Todos os tokens, chaves e endpoints de conta são digitados em campos ocultos.
+A conferência final informa apenas se a credencial foi fornecida, sem mostrar
+prefixos ou fragmentos — adequado para instalação durante aulas gravadas.
+
 ## Projetos disponíveis
 
 ### Site simples

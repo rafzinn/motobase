@@ -79,7 +79,8 @@ caixa_fecha(){ say "     ${AMB}▙$(regua $((LARGURA-6)))${C0}"; say ""; }
 ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
   local v
   while true; do
-    ask v "$2" ""
+    read -r -s -p "$(echo -e "     ${LRJ}?${C0} ${2} ${DIM}(oculto · Enter pula)${C0}: ")" v || true
+    printf '\n' >&2
     [[ -z "$v" ]] && break
     [[ "$v" =~ $3 ]] && break
     warn "esse valor não parece certo — esperado algo como: ${4}"
@@ -388,11 +389,11 @@ questionario(){
   say "       ${DIM}projeto ····${C0} ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
   say "       ${DIM}domínio ····${C0} https://${APP_DOMAIN}"
   say "       ${DIM}e-mail ·····${C0} ${LE_EMAIL}"
-  m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="${CFTOK:0:8}… ${DIM}(DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="${CLTOK:0:14}…"; say "       ${DIM}claude ·····${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="${OAKEY:0:10}…";  say "       ${DIM}openai ·····${C0} ${m}"
-  m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="${TGTOK%%:*}:…";  say "       ${DIM}telegram ···${C0} ${m}"
-  m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="${TSKEY:0:14}…"; say "       ${DIM}tailscale ··${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="informado ${DIM}(oculto · DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="informado ${DIM}(oculto)${C0}"; say "       ${DIM}claude ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="informado ${DIM}(oculto)${C0}";  say "       ${DIM}openai ·····${C0} ${m}"
+  m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="informado ${DIM}(oculto)${C0}";  say "       ${DIM}telegram ···${C0} ${m}"
+  m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="informado ${DIM}(oculto)${C0}"; say "       ${DIM}tailscale ··${C0} ${m}"
   if [[ -z "$BASE_ONLY" ]]; then
     m="não"; [[ "$QUER_MOLT" =~ ^[sS] ]] && m="sim"; say "       ${DIM}moltbot ····${C0} ${m}"
   fi
@@ -724,13 +725,9 @@ EOF
   ok "Firewall de gestão ativo ${DIM}(persistente a reboot)${C0}"
   sub "do IP público as portas 9000/8090/18789 nem respondem — só pela tailnet"
 
-  # Portainer novo pode exigir um "setup token" na criação do admin — ele é impresso
-  # nos LOGS do container (prova de que você é o dono do servidor). Mostra se achar.
-  if [[ "$DRY" != "--dry-run" ]]; then
-    sleep 8
-    local ptok; ptok=$(docker service logs portainer_portainer 2>&1 | grep -i 'token' | tail -1 || true)
-    [[ -n "$ptok" ]] && { warn "código de segurança do Portainer (se a tela pedir):"; sub "${ptok}"; } || true
-  fi
+  # Portainer novo pode exigir um setup token. Não o imprimimos automaticamente
+  # para que instalações gravadas nunca exponham credenciais na tela.
+  [[ "$DRY" != "--dry-run" ]] && sleep 8
   ok "Portainer: ${BOLD}${PORTAINER_URL}${C0}"
   sub "crie o admin em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
   sub "se pedir 'setup token': docker service logs portainer_portainer 2>&1 | grep -i token"
@@ -1051,11 +1048,12 @@ volumes:
 EOF
   chmod 600 "${D}/opt/${SLUG}/moltbot.yml"   # contém token/chave — root-only
   run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot >/dev/null 2>&1"
-  ok "Moltbot no ar: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789/?token=${GWTOK}${C0}"
+  ok "Moltbot no ar: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789${C0}"
+  sub "gateway token oculto e salvo no arquivo de credenciais"
   sub "1º acesso: o browser vira device 'Pending' — aprove com:"
   sub "docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot devices approve <requestId>"
   if [[ -n "$MOLT_TG" ]]; then
-    sub "conectar o Telegram: docker exec -it \$(docker ps -q -f name=moltbot_moltbot) clawdbot channels add --channel telegram --token ${MOLT_TG}"
+    sub "conectar o Telegram depois usando o token salvo no arquivo de credenciais"
     sub "depois: docker service update --force moltbot_moltbot (NUNCA docker restart)"
   fi
   cred ""; cred "Moltbot (gestão, só-tailnet): http://${TSIP:-<ip-tailnet>}:18789"
