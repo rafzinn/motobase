@@ -42,6 +42,10 @@ O wizard pergunta somente nome, domínio, e-mail e credenciais opcionais de
 Cloudflare, Claude, OpenAI, Telegram e Tailscale. Senhas internas e decisões
 técnicas são geradas automaticamente.
 
+Quando o token da Cloudflare é informado, o wizard pede o domínio principal e
+o subdomínio personalizado separadamente, cria o registro A no começo da
+instalação e aproveita o restante do processo para a propagação do DNS.
+
 ## Projetos disponíveis
 
 ### Site simples

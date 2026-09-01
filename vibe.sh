@@ -259,24 +259,39 @@ questionario(){
   info "identificador técnico: ${BOLD}${SLUG}${C0} ${DIM}(banco, stacks, secrets)${C0}"
 
   say ""
-  while true; do
-    ask APP_DOMAIN "Domínio do projeto (ex: app.seudominio.com.br)"
-    # aceita colado com https://, barra, espaço, maiúscula — normaliza tudo
-    APP_DOMAIN=$(echo "$APP_DOMAIN" | tr '[:upper:]' '[:lower:]' | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
-    [[ "$APP_DOMAIN" == *.* ]] && break
-    warn "isso não parece um domínio (precisa ter ponto, ex: app.meusite.com.br)"
-  done
-  ask LE_EMAIL "E-mail pro certificado HTTPS (Let's Encrypt)" "admin@${APP_DOMAIN#*.}"
-  [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${APP_DOMAIN#*.}"; LE_EMAIL="admin@${APP_DOMAIN#*.}"; }
-
-  say ""
-  say "     ${BOLD}Cloudflare${C0} ${DIM}— com um token eu crio o registro DNS sozinho${C0}"
+  say "     ${BOLD}Cloudflare${C0} ${DIM}— cria o subdomínio agora, enquanto o restante instala${C0}"
   sub "Create Token → modelo 'Edit zone DNS' → Zone Resources: a zona do seu domínio"
   link "https://dash.cloudflare.com/profile/api-tokens"
   ask_tok CFTOK "Token da API Cloudflare" '^[A-Za-z0-9_-]{30,60}$' "40 caracteres de letras, números, _ e -"
+
+  BASE_DOMAIN=""; SUBDOMAIN=""
   if [[ -n "$CFTOK" ]]; then
+    while true; do
+      ask BASE_DOMAIN "Domínio principal na Cloudflare (ex: seusite.com.br)"
+      BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
+      [[ "$BASE_DOMAIN" == *.* && "$BASE_DOMAIN" != *..* \
+        && "$BASE_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break
+      warn "digite o domínio principal da zona, como meusite.com.br"
+    done
+    while true; do
+      ask SUBDOMAIN "Subdomínio personalizado desta VPS" "$SLUG"
+      SUBDOMAIN=$(echo "$SUBDOMAIN" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+      [[ "$SUBDOMAIN" != *..* && "$SUBDOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] && break
+      warn "use letras, números, pontos ou hífens, sem começar/terminar com hífen"
+    done
+    APP_DOMAIN="${SUBDOMAIN}.${BASE_DOMAIN}"
+    info "endereço escolhido: ${BOLD}https://${APP_DOMAIN}${C0}"
     cf_dns_auto
   else
+    while true; do
+      ask APP_DOMAIN "Domínio completo do projeto (ex: app.seudominio.com.br)"
+      APP_DOMAIN=$(echo "$APP_DOMAIN" | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
+      [[ "$APP_DOMAIN" == *.* && "$APP_DOMAIN" != *..* \
+        && "$APP_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break
+      warn "isso não parece um domínio (ex: app.meusite.com.br)"
+    done
     caixa_abre
     caixa_txt "${BOLD}DNS NA MÃO, ENTÃO${C0}"
     caixa_txt ""
@@ -286,6 +301,10 @@ questionario(){
     caixa_txt "${DIM}Na primeira emissão do HTTPS, deixe a nuvem CINZA (DNS only).${C0}"
     caixa_fecha
   fi
+
+  local email_domain="${BASE_DOMAIN:-${APP_DOMAIN#*.}}"
+  ask LE_EMAIL "E-mail pro certificado HTTPS (Let's Encrypt)" "admin@${email_domain}"
+  [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${email_domain}"; LE_EMAIL="admin@${email_domain}"; }
 
   say ""
   say "     ${BOLD}Claude${C0} ${DIM}— o programador desta VPS${C0}"
