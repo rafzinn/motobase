@@ -150,7 +150,7 @@ install_foundation(){
   say "  ${BOLD}PRIMEIRA EXECUÇÃO${C0}"
   say "  A fundação ainda não foi instalada nesta VPS."
   say ""
-  info "Será instalado: Swarm, Traefik, Portainer, PostgreSQL + pgvector, Redis, Tailscale e backup."
+  info "Será instalado: Swarm, Traefik, Portainer, Beszel, PostgreSQL + pgvector, Redis, Tailscale e backup."
   say ""
   confirm "Começar a instalação da fundação?" "s" || return 0
   local args=(--base)
@@ -553,6 +553,10 @@ smoke_foundation(){
   service_check traefik_traefik "Traefik"
   service_check portainer_portainer "Portainer"
   service_check portainer_agent "Portainer Agent"
+  service_check beszel_hub "Beszel Hub"
+  service_check beszel_agent "Beszel Agent"
+  curl -fsS --max-time 5 http://127.0.0.1:8090/api/health >/dev/null 2>&1 \
+    && ok "Painel Beszel respondeu" || warn "Painel Beszel não respondeu na porta local 8090"
   service_check "${BASE_SLUG}_postgres" "PostgreSQL + pgvector"
   service_check "${BASE_SLUG}_redis" "Redis"
   local pg_cid redis_cid latest_backup

@@ -28,6 +28,7 @@ A fundação não é reinstalada quando um projeto novo é criado.
 - Docker Swarm e rede overlay;
 - Traefik com HTTPS automático;
 - Portainer acessível somente pela Tailnet;
+- Beszel Hub + Agent para saúde, consumo e containers, somente pela Tailnet;
 - PostgreSQL 16 com pgvector;
 - Redis 7 com persistência;
 - Tailscale e bloqueio das portas administrativas;
@@ -36,6 +37,7 @@ A fundação não é reinstalada quando um projeto novo é criado.
 - backup local diário;
 - smoke tests ao final.
 
+O painel Beszel já nasce registrado e fica em `http://<IP-TAILSCALE>:8090`.
 O wizard pergunta somente nome, domínio, e-mail e credenciais opcionais de
 Cloudflare, Claude, OpenAI, Telegram e Tailscale. Senhas internas e decisões
 técnicas são geradas automaticamente.

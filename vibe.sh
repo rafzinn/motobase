@@ -7,7 +7,7 @@
 #  Questionário único no início (com links de onde pegar cada credencial e
 #  validação de formato) → o resto roda sozinho → prova real no final:
 #    Docker Swarm → Traefik (HTTPS automático) → Postgres+pgvector → Redis
-#    → Tailscale + Portainer só-tailnet (gestão) → Claude Code autenticado
+#    → Tailscale + Portainer + Beszel só-tailnet (gestão) → Claude Code autenticado
 #    com CLAUDE.md da infra → moltbot (opcional) → backup diário.
 #  As stacks nascem CRUAS: banco sem tabelas, produto do zero — você comanda.
 #  Senhas fortes geradas na hora, guardadas como Docker secrets.
@@ -574,9 +574,9 @@ EOF
 
 # ── etapa 6: tailscale + gestão só-tailnet ───────────────────────────────────
 tailscale_gestao(){
-  ETAPA="Tailscale + Portainer"
+  ETAPA="Tailscale + gestão"
   etapa "6/${TOTAL_STEPS}" "TAILSCALE" "painéis de gestão fora da internet pública"
-  info "Portainer só abre com o Tailscale ligado no SEU dispositivo"
+  info "Portainer e Beszel só abrem com o Tailscale ligado no SEU dispositivo"
   if ! command -v tailscale >/dev/null; then
     info "instalando Tailscale (script oficial)…"
     run "curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1"
@@ -634,7 +634,7 @@ EOF
 #!/usr/bin/env bash
 # Trava portas de GESTÃO pra aceitarem só tailnet (100.64/10) e localhost.
 set -e
-PORTS="9000 18789"   # 9000=Portainer · 18789=moltbot (gateway/painel)
+PORTS="9000 8090 18789"   # 9000=Portainer · 8090=Beszel · 18789=moltbot
 iptables -N GESTAO-TAILNET 2>/dev/null || true
 iptables -F GESTAO-TAILNET
 for p in $PORTS; do
@@ -643,6 +643,7 @@ for p in $PORTS; do
   iptables -A GESTAO-TAILNET -p tcp --dport "$p" -j DROP
 done
 iptables -C DOCKER-USER -j GESTAO-TAILNET 2>/dev/null || iptables -I DOCKER-USER 1 -j GESTAO-TAILNET
+iptables -C INPUT -j GESTAO-TAILNET 2>/dev/null || iptables -I INPUT 1 -j GESTAO-TAILNET
 EOF
   chmod +x "${D}/usr/local/sbin/gestao-lockdown.sh"
   cat > "${D}/etc/systemd/system/gestao-lockdown.service" <<EOF
@@ -661,7 +662,7 @@ WantedBy=multi-user.target
 EOF
   run "systemctl daemon-reload && systemctl enable --now gestao-lockdown.service >/dev/null 2>&1"
   ok "Firewall de gestão ativo ${DIM}(persistente a reboot)${C0}"
-  sub "do IP público as portas 9000/18789 nem respondem — só pela tailnet"
+  sub "do IP público as portas 9000/8090/18789 nem respondem — só pela tailnet"
 
   # Portainer novo pode exigir um "setup token" na criação do admin — ele é impresso
   # nos LOGS do container (prova de que você é o dono do servidor). Mostra se achar.
@@ -675,6 +676,168 @@ EOF
   sub "se pedir 'setup token': docker service logs portainer_portainer 2>&1 | grep -i token"
   cred ""; cred "Portainer (gestão, só-tailnet): http://${TSIP}:9000"
   cred "IP tailnet do servidor: ${TSIP}"
+
+  beszel_stack
+}
+
+# ── Beszel: painel leve de CPU, RAM, disco, rede e containers ─────────────────
+beszel_stack(){
+  ETAPA="Beszel"
+  local version="0.18.8" dir="${D}/opt/${SLUG}/beszel"
+  local admin_file="${D}/etc/motobase/beszel-admin.env"
+  local admin_email="${LE_EMAIL}" admin_password="" auth="" key="" token=""
+  mkdir -p "$dir" "${D}/etc/motobase"
+
+  if [[ -r "$admin_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$admin_file"
+    admin_email="${BESZEL_ADMIN_EMAIL:-$admin_email}"
+    admin_password="${BESZEL_ADMIN_PASSWORD:-}"
+  fi
+  if [[ -z "$admin_password" ]]; then
+    admin_password="$(pw)$(pw)"
+    {
+      printf 'BESZEL_ADMIN_EMAIL=%q\n' "$admin_email"
+      printf 'BESZEL_ADMIN_PASSWORD=%q\n' "$admin_password"
+    } > "$admin_file"
+    chmod 600 "$admin_file"
+  fi
+
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] criaria Beszel Hub + Agent ${version}${C0}"
+    say "       ${DIM}[dry-run] registraria o Agent automaticamente no Hub${C0}"
+    write_beszel_stack "$dir/stack.yml" "$version"
+    ok "Beszel: ${BOLD}http://${TSIP}:8090${C0} ${DIM}(simulação)${C0}"
+    cred ""; cred "Beszel (saúde, só-tailnet): http://${TSIP}:8090"
+    cred "  login: ${admin_email}"
+    cred "  senha inicial: ${admin_password}"
+    return
+  fi
+
+  # O primeiro boot recebe credenciais por um arquivo temporário. Depois que a
+  # conta existe, o deploy final remove a senha do serviço e do stack.yml.
+  if ! docker service inspect beszel_hub >/dev/null 2>&1; then
+    local init_stack; init_stack=$(mktemp)
+    cat > "$init_stack" <<EOF
+version: "3.8"
+services:
+  hub:
+    image: henrygd/beszel:${version}
+    environment:
+      APP_URL: http://${TSIP}:8090
+      USER_EMAIL: ${admin_email}
+      USER_PASSWORD: ${admin_password}
+      CHECK_UPDATES: "false"
+    volumes: [hub_data:/beszel_data]
+    ports:
+      - { target: 8090, published: 8090, mode: host }
+    deploy:
+      placement: { constraints: [node.role == manager] }
+volumes:
+  hub_data: {}
+EOF
+    chmod 600 "$init_stack"
+    docker stack deploy --detach=true -c "$init_stack" beszel >/dev/null
+    rm -f "$init_stack"
+  fi
+
+  info "configurando o painel e registrando esta VPS…"
+  local i=0
+  until curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" >/dev/null 2>&1; do
+    i=$((i+1)); [[ $i -gt 30 ]] && die "Beszel Hub não respondeu em 90 segundos — veja: docker service ps beszel_hub"
+    sleep 3
+  done
+
+  if ! docker secret inspect beszel_agent_key >/dev/null 2>&1 \
+    || ! docker secret inspect beszel_agent_token >/dev/null 2>&1; then
+    auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
+        '{identity:$identity,password:$password}')" \
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
+    [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais preservadas em /etc/motobase/beszel-admin.env."
+    key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
+      "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
+    token=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
+      "http://127.0.0.1:8090/api/beszel/universal-token?enable=1" | jq -r '.token // empty')
+    [[ -n "$key" && -n "$token" ]] || die "Beszel não forneceu a chave de registro do Agent. Rode o instalador novamente."
+    docker secret inspect beszel_agent_key >/dev/null 2>&1 \
+      || printf '%s' "$key" | docker secret create beszel_agent_key - >/dev/null
+    docker secret inspect beszel_agent_token >/dev/null 2>&1 \
+      || printf '%s' "$token" | docker secret create beszel_agent_token - >/dev/null
+  fi
+
+  write_beszel_stack "$dir/stack.yml" "$version"
+  docker stack deploy --detach=true -c "/opt/${SLUG}/beszel/stack.yml" beszel >/dev/null
+  if [[ -z "$auth" ]]; then
+    auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
+        '{identity:$identity,password:$password}')" \
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
+  fi
+  i=0
+  until curl -fsS --max-time 5 -H "Authorization: ${auth}" \
+    "http://127.0.0.1:8090/api/collections/systems/records?perPage=100" \
+    | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)' >/dev/null 2>&1; do
+    i=$((i+1)); [[ $i -gt 20 ]] && die "Beszel Agent iniciou, mas não apareceu no painel em 60 segundos — veja: docker service logs beszel_agent"
+    sleep 3
+  done
+  ok "Beszel Hub + Agent instalados"
+  ok "Esta VPS apareceu no painel como ${BOLD}${SLUG}${C0}"
+  ok "Painel de saúde: ${BOLD}http://${TSIP}:8090${C0}"
+  sub "CPU, RAM, disco, rede e containers · acesso somente pela Tailnet"
+  cred ""; cred "Beszel (saúde, só-tailnet): http://${TSIP}:8090"
+  cred "  login: ${admin_email}"
+  cred "  senha inicial: ${admin_password}"
+}
+
+write_beszel_stack(){
+  local target="$1" version="$2"
+  cat > "$target" <<EOF
+version: "3.8"
+services:
+  hub:
+    image: henrygd/beszel:${version}
+    environment:
+      APP_URL: http://${TSIP}:8090
+      CHECK_UPDATES: "false"
+    volumes: [hub_data:/beszel_data]
+    ports:
+      - { target: 8090, published: 8090, mode: host }
+    healthcheck:
+      test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
+      interval: 120s
+      start_period: 10s
+      timeout: 5s
+    deploy:
+      placement: { constraints: [node.role == manager] }
+  agent:
+    image: henrygd/beszel-agent:${version}
+    environment:
+      HUB_URL: http://127.0.0.1:8090
+      KEY_FILE: /run/secrets/beszel_agent_key
+      TOKEN_FILE: /run/secrets/beszel_agent_token
+      SYSTEM_NAME: ${SLUG}
+      DISABLE_SSH: "true"
+    secrets: [beszel_agent_key, beszel_agent_token]
+    volumes:
+      - agent_data:/var/lib/beszel-agent
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [hostnet]
+    deploy:
+      mode: global
+      placement: { constraints: [node.role == manager] }
+secrets:
+  beszel_agent_key: { external: true }
+  beszel_agent_token: { external: true }
+networks:
+  hostnet:
+    external: true
+    name: host
+volumes:
+  hub_data: {}
+  agent_data: {}
+EOF
+  chmod 600 "$target"
 }
 
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
@@ -754,6 +917,7 @@ antes de criar qualquer coisa.
 - Banco: \`${SLUG}_postgres\` (Postgres 16 + pgvector habilitado, db \`${SLUG}\`, SEM tabelas —
   desenhar o schema junto com o dono antes de criar). Rede interna \`${SLUG}_internal\`.
 - Redis: \`${SLUG}_redis\` (cache/filas/sessões, AOF ligado).
+- Saúde: Beszel em \`http://${TSIP:-<ip-tailnet>}:8090\` (CPU, RAM, disco, rede e containers; só-tailnet).
 - Secrets no Swarm (fonte única, NUNCA copiar valor em texto plano): ${SLUG}_pg_password,
   ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}. Ler em runtime via /run/secrets/.
 - App: template pronto em /opt/${SLUG}/app.yml (imagem \`${SLUG}-api\`, porta 3000,
@@ -877,7 +1041,7 @@ prova_real(){
   [[ "$DRY" == "--dry-run" ]] && return 0
   say ""
   say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
-  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent"
+  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent beszel_hub beszel_agent"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
   while true; do
@@ -923,6 +1087,7 @@ resumo(){
   say ""
   say "     ${DIM}projeto ······${C0} ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
   say "     ${DIM}gestão ·······${C0} ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
+  say "     ${DIM}saúde ········${C0} ${BOLD}http://${TSIP:-<ip-tailnet>}:8090${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
   say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
   say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"
   say "     ${DIM}credenciais ··${C0} ${BOLD}/root/${SLUG}-credenciais.txt${C0}"
@@ -946,6 +1111,7 @@ registrar_base(){
     printf 'BASE_DOMAIN=%q\n' "$APP_DOMAIN"
     printf 'LE_EMAIL=%q\n' "$LE_EMAIL"
     printf 'TAILSCALE_IP=%q\n' "${TSIP:-}"
+    printf 'BESZEL_URL=%q\n' "http://${TSIP:-}:8090"
     printf 'CERT_RESOLVER=%q\n' "le"
     printf 'INSTALLED_AT=%q\n' "$(date -Iseconds)"
   } > /etc/motobase/base.env
