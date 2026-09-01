@@ -121,11 +121,12 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
   --base) BASE_ONLY="1" ;;
+  --repair-beszel) REPAIR_BESZEL="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -775,6 +776,7 @@ beszel_stack(){
   ETAPA="Beszel"
   local version="0.18.8" dir="${D}/opt/${SLUG}/beszel"
   local admin_file="${D}/etc/motobase/beszel-admin.env"
+  local token_state="${D}/etc/motobase/beszel-agent-token-mode"
   local admin_email="${LE_EMAIL}" admin_password="" auth="" key="" token=""
   mkdir -p "$dir" "${D}/etc/motobase"
 
@@ -838,6 +840,23 @@ EOF
     sleep 3
   done
 
+  # Token temporário vive só na memória do Hub e morre quando ele reinicia.
+  # Esta marca também migra instalações feitas por versões antigas do wizard.
+  local renew_agent_secrets=0 wait=0 token_response="" requested_token="" token_active="" token_permanent=""
+  [[ -r "$token_state" && "$(<"$token_state")" == "permanent-v1" ]] || renew_agent_secrets=1
+  if [[ "$renew_agent_secrets" -eq 1 ]]; then
+    info "atualizando o registro persistente do Beszel Agent…"
+    if docker service inspect beszel_agent >/dev/null 2>&1; then
+      docker service rm beszel_agent >/dev/null
+      until ! docker service inspect beszel_agent >/dev/null 2>&1; do
+        wait=$((wait+1)); [[ $wait -gt 20 ]] && die "O Agent antigo não parou. Veja: docker service ps beszel_agent"
+        sleep 1
+      done
+    fi
+    docker secret rm beszel_agent_key >/dev/null 2>&1 || true
+    docker secret rm beszel_agent_token >/dev/null 2>&1 || true
+  fi
+
   if ! docker secret inspect beszel_agent_key >/dev/null 2>&1 \
     || ! docker secret inspect beszel_agent_token >/dev/null 2>&1; then
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
@@ -847,9 +866,14 @@ EOF
     [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais preservadas em /etc/motobase/beszel-admin.env."
     key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
       "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
-    token=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
-      "http://127.0.0.1:8090/api/beszel/universal-token?enable=1" | jq -r '.token // empty')
-    [[ -n "$key" && -n "$token" ]] || die "Beszel não forneceu a chave de registro do Agent. Rode o instalador novamente."
+    requested_token=$(openssl rand -hex 32)
+    token_response=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
+      "http://127.0.0.1:8090/api/beszel/universal-token?enable=1&permanent=1&token=${requested_token}")
+    token=$(jq -r '.token // empty' <<<"$token_response")
+    token_active=$(jq -r '.active // false' <<<"$token_response")
+    token_permanent=$(jq -r '.permanent // false' <<<"$token_response")
+    [[ -n "$key" && "$token" == "$requested_token" && "$token_active" == true && "$token_permanent" == true ]] \
+      || die "Beszel não confirmou o token persistente do Agent. Rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"
     docker secret inspect beszel_agent_key >/dev/null 2>&1 \
       || printf '%s' "$key" | docker secret create beszel_agent_key - >/dev/null
     docker secret inspect beszel_agent_token >/dev/null 2>&1 \
@@ -868,9 +892,11 @@ EOF
   until curl -fsS --max-time 5 -H "Authorization: ${auth}" \
     "http://127.0.0.1:8090/api/collections/systems/records?perPage=100" \
     | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)' >/dev/null 2>&1; do
-    i=$((i+1)); [[ $i -gt 20 ]] && die "Beszel Agent iniciou, mas não apareceu no painel em 60 segundos — veja: docker service logs beszel_agent"
+    i=$((i+1)); [[ $i -gt 20 ]] && { warn "Beszel Agent ainda não apareceu no painel — a fundação continuará normalmente"; sub "investigar: docker service logs beszel_agent --tail 80"; return 0; }
     sleep 3
   done
+  printf 'permanent-v1\n' > "$token_state"
+  chmod 600 "$token_state"
   ok "Beszel Hub + Agent instalados"
   ok "Esta VPS apareceu no painel como ${BOLD}${SLUG}${C0}"
   ok "Painel de saúde: ${BOLD}${BESZEL_URL}${C0}"
@@ -1212,6 +1238,19 @@ registrar_base(){
   chmod 600 /etc/motobase/projects.tsv
   ok "Fundação registrada — nas próximas execuções este curl abre o gerenciador"
 }
+
+if [[ -n "$REPAIR_BESZEL" ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  [[ -r /etc/motobase/base.env ]] || die "Não encontrei /etc/motobase/base.env nesta VPS."
+  # shellcheck disable=SC1091
+  source /etc/motobase/base.env
+  PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN="$BASE_DOMAIN"
+  TSIP="${TAILSCALE_IP:-}"; PORTAINER_URL="${PORTAINER_URL:-http://${TSIP}:9000}"
+  BESZEL_URL="${BESZEL_URL:-http://${TSIP}:8090}"
+  cred(){ :; }
+  beszel_stack
+  exit 0
+fi
 
 banner
 preflight

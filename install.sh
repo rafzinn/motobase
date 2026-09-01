@@ -19,6 +19,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --status) ACTION="status" ;;
+    --repair-beszel) ACTION="repair-beszel" ;;
     --site) ACTION="site" ;;
     --wordpress) ACTION="wordpress" ;;
     --help|-h) ACTION="help" ;;
@@ -138,6 +139,7 @@ help_text(){
 Uso:
   bash <(curl -fsSL https://get.motobot.com.br)
   bash <(curl -fsSL https://get.motobot.com.br) --status
+  bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel
   bash <(curl -fsSL https://get.motobot.com.br) --site
   bash <(curl -fsSL https://get.motobot.com.br) --wordpress
 
@@ -644,6 +646,7 @@ main(){
 
   case "$ACTION" in
     status) smoke_foundation ;;
+    repair-beszel) bash <(curl -fsSL "${RAW_BASE}/vibe.sh") --repair-beszel ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;
