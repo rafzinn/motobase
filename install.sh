@@ -607,9 +607,23 @@ smoke_foundation(){
   else
     warn "PostgreSQL não aceitou conexão"
   fi
-  [[ -n "$redis_cid" ]] && docker exec "$redis_cid" redis-cli ping 2>/dev/null | grep -qx PONG \
-    && ok "Redis respondeu PONG" || warn "Redis não respondeu ao teste"
+  if [[ -n "$redis_cid" ]] && docker secret inspect "${BASE_SLUG}_redis_password" >/dev/null 2>&1; then
+    docker exec "$redis_cid" sh -c "redis-cli -a \"\$(cat /run/secrets/${BASE_SLUG}_redis_password)\" ping" 2>/dev/null | grep -qx PONG \
+      && ok "Redis respondeu com autenticação" || warn "Redis não respondeu com autenticação"
+  elif [[ -n "$redis_cid" ]]; then
+    warn "Redis respondeu sem senha — base legada; recrie/atualize a fundação para proteger"
+  else
+    warn "Redis não respondeu ao teste"
+  fi
   tailscale status >/dev/null 2>&1 && ok "Tailscale conectado ($(tailscale ip -4 2>/dev/null | head -1))" || warn "Tailscale desconectado"
+  if systemctl is-enabled --quiet gestao-lockdown.service 2>/dev/null \
+    && iptables -C DOCKER-USER -j GESTAO-TAILNET 2>/dev/null \
+    && iptables -S GESTAO-TAILNET 2>/dev/null | grep -q -- '-s 100.64.0.0/10'; then
+    ok "Painéis de gestão bloqueados fora da Tailnet"
+  else
+    warn "Não consegui confirmar o bloqueio Tailnet de Portainer/Beszel"
+    info "Rode: systemctl status gestao-lockdown.service"
+  fi
   [[ -x "/opt/${BASE_SLUG}/backup.sh" ]] && ok "Backup diário configurado" || warn "Script de backup não encontrado"
   [[ -f /etc/cron.d/${BASE_SLUG}-backup ]] && ok "Agendamento de backup presente" || warn "Agendamento de backup ausente"
   latest_backup=$(find "/var/backups/${BASE_SLUG}" -maxdepth 1 -name '*.sql.gz' -type f 2>/dev/null | sort | tail -1 || true)

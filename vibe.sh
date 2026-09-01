@@ -451,6 +451,18 @@ docker_swarm(){
     info "instalando utilitários básicos…"
     run "apt-get update >/dev/null 2>&1 && apt-get install -y ca-certificates curl jq openssl >/dev/null 2>&1"
   fi
+  # Segurança do host desde o primeiro dia. A blindagem definitiva do SSH fica
+  # para depois que o aluno validar a entrada privada pela Tailnet.
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] instalaria fail2ban e atualizações de segurança automáticas${C0}"
+  else
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq fail2ban unattended-upgrades >/dev/null 2>&1 || true
+    systemctl enable --now fail2ban >/dev/null 2>&1 || true
+    dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
+    ok "Proteção do host: fail2ban + atualizações de segurança automáticas"
+    sub "SSH por senha continua só até você validar o acesso privado e rodar 'motobase preparar-ssh'"
+  fi
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     if [[ "$DRY" == "--dry-run" ]]; then
@@ -528,12 +540,17 @@ EOF
 dados_stack(){
   ETAPA="banco de dados"
   etapa "4/${TOTAL_STEPS}" "DADOS" "Postgres com pgvector + Redis, fora do alcance da internet"
-  local PGP; PGP=$(pw)
+  local PGP RDP; PGP=$(pw); RDP=$(pw)
   if ! docker secret inspect "${SLUG}_pg_password" >/dev/null 2>&1; then
     swarm_secret "${SLUG}_pg_password" "$PGP"
   else
     warn "secret ${SLUG}_pg_password já existe — mantendo a senha atual"
     PGP="(já existia — veja o registro anterior)"
+  fi
+  if ! docker secret inspect "${SLUG}_redis_password" >/dev/null 2>&1; then
+    swarm_secret "${SLUG}_redis_password" "$RDP"
+  else
+    warn "secret ${SLUG}_redis_password já existe — mantendo a senha atual"
   fi
   mkdir -p "${D}/opt/${SLUG}"
   cat > "${D}/opt/${SLUG}/stack.yml" <<EOF
@@ -547,15 +564,27 @@ services:
     secrets: [${SLUG}_pg_password]
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${SLUG}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"\$\$(cat /run/secrets/${SLUG}_redis_password)\""]
+    secrets: [${SLUG}_redis_password]
     volumes: [redisdata:/data]
     networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"\$\$(cat /run/secrets/${SLUG}_redis_password)\" ping | grep -qx PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 networks:
   internal: { driver: overlay, attachable: true }
 secrets:
   ${SLUG}_pg_password: { external: true }
+  ${SLUG}_redis_password: { external: true }
 volumes: { pgdata: {}, redisdata: {} }
 EOF
   run "docker stack deploy --detach=true -c /opt/${SLUG}/stack.yml ${SLUG} >/dev/null 2>&1"
@@ -563,7 +592,7 @@ EOF
   sub "rede interna '${SLUG}_internal' — banco e redis não ficam expostos na web"
   cred ""; cred "Postgres: host ${SLUG}_postgres:5432  db ${SLUG}  user postgres"
   cred "  senha: ${PGP}  (fonte de verdade: docker secret ${SLUG}_pg_password)"
-  cred "Redis: host ${SLUG}_redis:6379 (rede interna, sem senha)"
+  cred "Redis: host ${SLUG}_redis:6379 (rede interna; senha no secret ${SLUG}_redis_password)"
   banco_pronto
 }
 
@@ -1035,10 +1064,10 @@ antes de criar qualquer coisa.
   reiniciado vira zumbi) — usar \`docker service update --force <svc>\`.
 - Banco: \`${SLUG}_postgres\` (Postgres 16 + pgvector habilitado, db \`${SLUG}\`, SEM tabelas —
   desenhar o schema junto com o dono antes de criar). Rede interna \`${SLUG}_internal\`.
-- Redis: \`${SLUG}_redis\` (cache/filas/sessões, AOF ligado).
+- Redis: \`${SLUG}_redis\` (cache/filas/sessões, AOF e senha ligados; secret \`${SLUG}_redis_password\`).
 - Saúde: Beszel em \`${BESZEL_URL:-http://<ip-tailnet>:8090}\` (CPU, RAM, disco, rede e containers; só-tailnet).
 - Secrets no Swarm (fonte única, NUNCA copiar valor em texto plano): ${SLUG}_pg_password,
-  ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}. Ler em runtime via /run/secrets/.
+  ${SLUG}_redis_password, ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}. Ler em runtime via /run/secrets/.
 - Aplicações: nenhuma publicada ainda. Crie um site ou WordPress pelo comando principal da
   Motobase; cada projeto recebe sua própria stack, domínio e backup sem reinstalar esta base.
 - Gestão SÓ-TAILNET: Portainer :9000${QUER_MOLT:+, moltbot :18789} (lockdown na chain DOCKER-USER + unit
@@ -1148,6 +1177,17 @@ EOF
   if [[ "$DRY" != "--dry-run" ]]; then
     command -v cron >/dev/null 2>&1 || apt-get install -y cron >/dev/null 2>&1 || true
     systemctl enable --now cron >/dev/null 2>&1 || true
+    if "${D}/opt/${SLUG}/backup.sh" >/dev/null 2>&1; then
+      local first_backup
+      first_backup=$(find "${D}/var/backups/${SLUG}" -maxdepth 1 -name '*.sql.gz' -type f 2>/dev/null | sort | tail -1 || true)
+      if [[ -n "$first_backup" ]] && gzip -t "$first_backup" 2>/dev/null; then
+        ok "Primeiro backup local criado e validado"
+      else
+        warn "O primeiro backup não pôde ser validado"; sub "investigar: /opt/${SLUG}/backup.sh"
+      fi
+    else
+      warn "O primeiro backup falhou"; sub "investigar: /opt/${SLUG}/backup.sh"
+    fi
   fi
   ok "pg_dump diário às 03:10 → /var/backups/${SLUG}"
   sub "retenção 14 dias · agendado em /etc/cron.d/${SLUG}-backup"
@@ -1229,6 +1269,8 @@ resumo(){
   say "       ${DIM}└ gera e mostra um token novo para a primeira tela do Portainer${C0}"
   say "     ${LRJ}${BOLD}motobase acessos${C0}"
   say "       ${DIM}└ mostra o usuário e a senha do painel Beszel${C0}"
+  say "     ${LRJ}${BOLD}motobase preparar-ssh${C0}"
+  say "       ${DIM}└ prepara o acesso seguro; teste-o antes de usar 'motobase blindar-ssh'${C0}"
   say ""
   # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
   [[ "$DRY" == "--dry-run" ]] && warn "foi um dry-run: nada foi alterado no servidor (escritas em ${D})" || true
@@ -1270,12 +1312,79 @@ case "${1:-ajuda}" in
     echo "Beszel"
     printf 'Usuário: %s\nSenha: %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
     ;;
+  preparar-ssh)
+    [[ -s /root/.ssh/authorized_keys ]] || {
+      echo "Não há chave pública em /root/.ssh/authorized_keys." >&2
+      echo "Entre primeiro com uma chave SSH; por segurança, nada foi alterado." >&2
+      exit 1
+    }
+    id -u mbadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash --groups sudo mbadmin
+    install -d -m 700 -o mbadmin -g mbadmin /home/mbadmin/.ssh
+    install -m 600 -o mbadmin -g mbadmin /root/.ssh/authorized_keys /home/mbadmin/.ssh/authorized_keys
+    printf 'mbadmin ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-motobase-admin
+    chmod 440 /etc/sudoers.d/90-motobase-admin
+    visudo -cf /etc/sudoers.d/90-motobase-admin >/dev/null
+    host=$(tailscale ip -4 2>/dev/null | head -1 || true)
+    echo "Acesso seguro preparado para o usuário: mbadmin"
+    echo "Abra OUTRO terminal e teste antes de blindar:"
+    echo "  ssh mbadmin@${host:-<ip-tailnet>}"
+    echo "Depois do teste bem-sucedido, rode: motobase blindar-ssh"
+    ;;
+  blindar-ssh)
+    [[ -s /home/mbadmin/.ssh/authorized_keys ]] || {
+      echo "Primeiro rode 'motobase preparar-ssh' e teste a entrada como mbadmin." >&2; exit 1;
+    }
+    echo "Isto bloqueará senha, login SSH direto como root e SSH fora da Tailnet."
+    read -r -p "Digite BLINDAR somente se você JÁ testou 'ssh mbadmin@<ip-tailnet>': " answer
+    [[ "$answer" == BLINDAR ]] || { echo "Cancelado. Nada foi alterado."; exit 0; }
+    install -d -m 755 /etc/ssh/sshd_config.d
+    cat > /etc/ssh/sshd_config.d/99-motobase-tailnet.conf <<'CONF'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+CONF
+    if ! sshd -t; then
+      rm -f /etc/ssh/sshd_config.d/99-motobase-tailnet.conf
+      echo "A configuração SSH falhou na validação; nada foi aplicado." >&2; exit 1
+    fi
+    cat > /usr/local/sbin/motobase-ssh-tailnet.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+iptables -N MOTOBASE-SSH-TAILNET 2>/dev/null || true
+iptables -F MOTOBASE-SSH-TAILNET
+iptables -A MOTOBASE-SSH-TAILNET -p tcp --dport 22 -s 100.64.0.0/10 -j ACCEPT
+iptables -A MOTOBASE-SSH-TAILNET -p tcp --dport 22 -s 127.0.0.0/8 -j ACCEPT
+iptables -A MOTOBASE-SSH-TAILNET -p tcp --dport 22 -j DROP
+iptables -C INPUT -j MOTOBASE-SSH-TAILNET 2>/dev/null || iptables -I INPUT 1 -j MOTOBASE-SSH-TAILNET
+SCRIPT
+    chmod 700 /usr/local/sbin/motobase-ssh-tailnet.sh
+    cat > /etc/systemd/system/motobase-ssh-tailnet.service <<'UNIT'
+[Unit]
+Description=Motobase - SSH somente pela Tailnet
+After=tailscaled.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/motobase-ssh-tailnet.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable --now motobase-ssh-tailnet.service
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd
+    echo "Blindagem concluída: entre apenas como 'mbadmin' pela Tailnet e use sudo quando precisar."
+    ;;
   ajuda|-h|--help)
     cat <<'HELP'
 Motobase — atalhos de acesso
 
   motobase portainer-token  Gera token para concluir o primeiro acesso ao Portainer
   motobase acessos           Mostra usuário e senha do painel Beszel
+  motobase preparar-ssh      Cria o usuário seguro mbadmin a partir da sua chave SSH
+  motobase blindar-ssh       Desliga senha/root e libera SSH somente pela Tailnet (após testar mbadmin)
 HELP
     ;;
   *)

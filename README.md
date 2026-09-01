@@ -32,12 +32,18 @@ A fundação não é reinstalada quando um projeto novo é criado.
 - Portainer acessível somente pela Tailnet;
 - Beszel Hub + Agent para saúde, consumo e containers, somente pela Tailnet;
 - PostgreSQL 16 com pgvector;
-- Redis 7 com persistência;
+- Redis 7 com persistência e senha em Docker Secret;
 - Tailscale e bloqueio das portas administrativas;
 - Docker Secrets;
+- fail2ban e atualizações de segurança automáticas;
 - Claude Code e GitHub CLI;
 - backup local diário;
 - smoke tests ao final.
+
+Após validar a conexão privada, rode `motobase preparar-ssh`, teste o acesso
+como `mbadmin` em outro terminal e só então rode `motobase blindar-ssh`. Esse
+fluxo desliga senha/root direto e permite SSH somente pela Tailnet sem arriscar
+trancar quem está instalando para fora da VPS.
 
 Os painéis já nascem registrados em DNS privado: Portainer em
 `http://portainer.<domínio>:9000` e Beszel em `http://monitor.<domínio>:8090`.
