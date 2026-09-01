@@ -1241,11 +1241,19 @@ registrar_base(){
 
 if [[ -n "$REPAIR_BESZEL" ]]; then
   [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
-  [[ -r /etc/motobase/base.env ]] || die "Não encontrei /etc/motobase/base.env nesta VPS."
-  # shellcheck disable=SC1091
-  source /etc/motobase/base.env
-  PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN="$BASE_DOMAIN"
-  TSIP="${TAILSCALE_IP:-}"; PORTAINER_URL="${PORTAINER_URL:-http://${TSIP}:9000}"
+  if [[ -r /etc/motobase/base.env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/motobase/base.env
+    PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN="$BASE_DOMAIN"
+    TSIP="${TAILSCALE_IP:-}"
+  else
+    # A instalação pode ter parado antes de registrar o estado final.
+    SLUG=$(docker service ls --format '{{.Name}}' 2>/dev/null | sed -n 's/_postgres$//p' | head -1 || true)
+    [[ -n "$SLUG" ]] || die "Não encontrei a base instalada para reparar o Beszel."
+    PROJ_NAME="$SLUG"; APP_DOMAIN=""; LE_EMAIL=""
+    TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+  fi
+  PORTAINER_URL="${PORTAINER_URL:-http://${TSIP}:9000}"
   BESZEL_URL="${BESZEL_URL:-http://${TSIP}:8090}"
   cred(){ :; }
   beszel_stack
