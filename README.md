@@ -8,8 +8,6 @@ Infra pronta para criar, publicar e crescer sem bagunça.
 
 Instale a fundação uma vez. Volte quando quiser para criar o próximo projeto.
 
-[Guia rápido do aluno](docs/guia-do-aluno.html) — material visual de apoio para a instalação e os primeiros acessos.
-
 ```bash
 bash <(curl -fsSL https://get.motobot.com.br)
 ```
