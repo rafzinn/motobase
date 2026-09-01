@@ -1110,6 +1110,21 @@ pele_stack(){
   while read -r de para; do
     [[ -n "$de" && -n "$para" ]] && subs+="      sub_filter '${de}' '${para}';"$'\n'
   done < "${D}/opt/pele/azuis.map"
+  # título da aba do navegador: "App ✦ Projeto". As SPAs reescrevem document.title
+  # via JS, então um MutationObserver devolve o formato toda vez. Servido como
+  # arquivo do próprio domínio (o CSP script-src 'self' do Portainer aceita).
+  local proj_js; proj_js=$(printf '%s' "${PROJ_NAME}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  _title_js(){ # $1 = rótulo do app
+    cat <<TJS
+(function(){var A="$1",P="${proj_js}",T=A+" ✦ "+P;
+function f(){if(document.title!==T)document.title=T;}
+f();try{new MutationObserver(f).observe(document.head||document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}
+setInterval(f,1500);})();
+TJS
+  }
+  _title_js "Portainer" > "${D}/opt/pele/title-portainer.js"
+  _title_js "Beszel"    > "${D}/opt/pele/title-beszel.js"
+
   cat > "${D}/opt/pele/nginx.conf" <<PELECONF
 events {}
 http {
@@ -1118,6 +1133,7 @@ http {
     listen 9000;
     client_max_body_size 512m;
     location = /tvp-skin.css { default_type text/css; alias /pele/portainer.css; }
+    location = /tvp-title.js { default_type application/javascript; alias /pele/title-portainer.js; }
     location / {
       proxy_pass http://127.0.0.1:9010;
       proxy_http_version 1.1;
@@ -1131,13 +1147,14 @@ http {
       # text/css + JS: o Portainer injeta a paleta via JavaScript em runtime
       sub_filter_types text/css text/javascript application/javascript;
       sub_filter_once off;
-      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"></head>';
+      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"><script src="/tvp-title.js"></script></head>';
 ${subs}
     }
   }
   server {
     listen 8090;
     location = /tvp-skin.css { default_type text/css; alias /pele/beszel.css; }
+    location = /tvp-title.js { default_type application/javascript; alias /pele/title-beszel.js; }
     location / {
       proxy_pass http://127.0.0.1:8091;
       proxy_http_version 1.1;
@@ -1149,7 +1166,7 @@ ${subs}
       proxy_read_timeout 1h;
       proxy_buffering off;
       sub_filter_once on;
-      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"></head>';
+      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"><script src="/tvp-title.js"></script></head>';
     }
   }
 }
