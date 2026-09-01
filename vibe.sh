@@ -209,23 +209,31 @@ preflight(){
 
 # cria/atualiza o registro A na Cloudflare (nuvem cinza) — falha vira aviso, nunca derruba
 cf_dns_auto(){
-  if [[ "$DRY" == "--dry-run" ]]; then say "       ${DIM}[dry-run] criaria o registro A ${APP_DOMAIN} → ${IP} na Cloudflare${C0}"; return 0; fi
+  cf_dns_record "$APP_DOMAIN" "$IP" "público · DNS only para emissão do HTTPS"
+}
+
+cf_dns_record(){
+  local record_domain="$1" target_ip="$2" purpose="${3:-DNS only}"
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] criaria o registro A ${record_domain} → ${target_ip} na Cloudflare (${purpose})${C0}"
+    return 0
+  fi
   local api="https://api.cloudflare.com/client/v4"
   local hdr="Authorization: Bearer ${CFTOK}"
   info "Cloudflare: procurando a zona do domínio…"
-  local d="$APP_DOMAIN" zid=""
+  local d="$record_domain" zid=""
   while [[ "$d" == *.* ]]; do
     zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}&status=active" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
     [[ -n "$zid" ]] && break
     d="${d#*.}"
   done
   if [[ -z "$zid" ]]; then
-    warn "não achei a zona de ${APP_DOMAIN} nessa conta"
+    warn "não achei a zona de ${record_domain} nessa conta"
     sub "confere se o token tem a zona certa; por enquanto, crie o registro A manualmente"
     return 0
   fi
-  local rid; rid=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=A&name=${APP_DOMAIN}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
-  local body="{\"type\":\"A\",\"name\":\"${APP_DOMAIN}\",\"content\":\"${IP}\",\"ttl\":300,\"proxied\":false}"
+  local rid; rid=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=A&name=${record_domain}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+  local body="{\"type\":\"A\",\"name\":\"${record_domain}\",\"content\":\"${target_ip}\",\"ttl\":300,\"proxied\":false}"
   local sucesso=""
   if [[ -n "$rid" ]]; then
     sucesso=$(curl -fsS -X PUT -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records/${rid}" 2>/dev/null | grep -o '"success":true' || true)
@@ -233,8 +241,8 @@ cf_dns_auto(){
     sucesso=$(curl -fsS -X POST -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records" 2>/dev/null | grep -o '"success":true' || true)
   fi
   if [[ -n "$sucesso" ]]; then
-    ok "Registro A ${BOLD}${APP_DOMAIN}${C0} → ${IP} criado na Cloudflare"
-    sub "nuvem CINZA (DNS only), como o HTTPS precisa na primeira emissão"
+    ok "Registro A ${BOLD}${record_domain}${C0} → ${target_ip} criado na Cloudflare"
+    sub "${purpose}"
   else
     warn "a Cloudflare recusou a alteração"
     sub "o token tem permissão 'Zone.DNS Edit' nessa zona? crie o registro A manualmente"
@@ -619,6 +627,16 @@ tailscale_gestao(){
   fi
   ok "Servidor na tailnet: ${BOLD}${TSIP}${C0}"
 
+  PORTAINER_URL="http://${TSIP}:9000"
+  BESZEL_URL="http://${TSIP}:8090"
+  if [[ -n "$CFTOK" && -n "$BASE_DOMAIN" ]]; then
+    local portainer_host="portainer.${BASE_DOMAIN}" monitor_host="monitor.${BASE_DOMAIN}"
+    cf_dns_record "$portainer_host" "$TSIP" "privado · acessível somente conectado à Tailnet"
+    cf_dns_record "$monitor_host" "$TSIP" "privado · acessível somente conectado à Tailnet"
+    PORTAINER_URL="http://${portainer_host}:9000"
+    BESZEL_URL="http://${monitor_host}:8090"
+  fi
+
   # Portainer: publicado APENAS na porta 9000 host-mode, travado no firewall pra tailnet
   mkdir -p "${D}/opt/${SLUG}" "${D}/usr/local/sbin" "${D}/etc/systemd/system"
   cat > "${D}/opt/${SLUG}/portainer.yml" <<'EOF'
@@ -690,10 +708,10 @@ EOF
     local ptok; ptok=$(docker service logs portainer_portainer 2>&1 | grep -i 'token' | tail -1 || true)
     [[ -n "$ptok" ]] && { warn "código de segurança do Portainer (se a tela pedir):"; sub "${ptok}"; } || true
   fi
-  ok "Portainer: ${BOLD}http://${TSIP}:9000${C0}"
+  ok "Portainer: ${BOLD}${PORTAINER_URL}${C0}"
   sub "crie o admin em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
   sub "se pedir 'setup token': docker service logs portainer_portainer 2>&1 | grep -i token"
-  cred ""; cred "Portainer (gestão, só-tailnet): http://${TSIP}:9000"
+  cred ""; cred "Portainer (gestão, só-tailnet): ${PORTAINER_URL}"
   cred "IP tailnet do servidor: ${TSIP}"
 
   beszel_stack
@@ -726,8 +744,8 @@ beszel_stack(){
     say "       ${DIM}[dry-run] criaria Beszel Hub + Agent ${version}${C0}"
     say "       ${DIM}[dry-run] registraria o Agent automaticamente no Hub${C0}"
     write_beszel_stack "$dir/stack.yml" "$version"
-    ok "Beszel: ${BOLD}http://${TSIP}:8090${C0} ${DIM}(simulação)${C0}"
-    cred ""; cred "Beszel (saúde, só-tailnet): http://${TSIP}:8090"
+    ok "Beszel: ${BOLD}${BESZEL_URL}${C0} ${DIM}(simulação)${C0}"
+    cred ""; cred "Beszel (saúde, só-tailnet): ${BESZEL_URL}"
     cred "  login: ${admin_email}"
     cred "  senha inicial: ${admin_password}"
     return
@@ -743,7 +761,7 @@ services:
   hub:
     image: henrygd/beszel:${version}
     environment:
-      APP_URL: http://${TSIP}:8090
+      APP_URL: ${BESZEL_URL}
       USER_EMAIL: ${admin_email}
       USER_PASSWORD: ${admin_password}
       CHECK_UPDATES: "false"
@@ -802,9 +820,9 @@ EOF
   done
   ok "Beszel Hub + Agent instalados"
   ok "Esta VPS apareceu no painel como ${BOLD}${SLUG}${C0}"
-  ok "Painel de saúde: ${BOLD}http://${TSIP}:8090${C0}"
+  ok "Painel de saúde: ${BOLD}${BESZEL_URL}${C0}"
   sub "CPU, RAM, disco, rede e containers · acesso somente pela Tailnet"
-  cred ""; cred "Beszel (saúde, só-tailnet): http://${TSIP}:8090"
+  cred ""; cred "Beszel (saúde, só-tailnet): ${BESZEL_URL}"
   cred "  login: ${admin_email}"
   cred "  senha inicial: ${admin_password}"
 }
@@ -817,7 +835,7 @@ services:
   hub:
     image: henrygd/beszel:${version}
     environment:
-      APP_URL: http://${TSIP}:8090
+      APP_URL: ${BESZEL_URL}
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
@@ -936,7 +954,7 @@ antes de criar qualquer coisa.
 - Banco: \`${SLUG}_postgres\` (Postgres 16 + pgvector habilitado, db \`${SLUG}\`, SEM tabelas —
   desenhar o schema junto com o dono antes de criar). Rede interna \`${SLUG}_internal\`.
 - Redis: \`${SLUG}_redis\` (cache/filas/sessões, AOF ligado).
-- Saúde: Beszel em \`http://${TSIP:-<ip-tailnet>}:8090\` (CPU, RAM, disco, rede e containers; só-tailnet).
+- Saúde: Beszel em \`${BESZEL_URL:-http://<ip-tailnet>:8090}\` (CPU, RAM, disco, rede e containers; só-tailnet).
 - Secrets no Swarm (fonte única, NUNCA copiar valor em texto plano): ${SLUG}_pg_password,
   ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}. Ler em runtime via /run/secrets/.
 - App: template pronto em /opt/${SLUG}/app.yml (imagem \`${SLUG}-api\`, porta 3000,
@@ -1105,8 +1123,8 @@ resumo(){
   say "  ${GRN}$(regua $LARGURA)${C0}"
   say ""
   say "     ${DIM}projeto ······${C0} ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
-  say "     ${DIM}gestão ·······${C0} ${BOLD}http://${TSIP:-<ip-tailnet>}:9000${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
-  say "     ${DIM}saúde ········${C0} ${BOLD}http://${TSIP:-<ip-tailnet>}:8090${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
+  say "     ${DIM}gestão ·······${C0} ${BOLD}${PORTAINER_URL:-http://<ip-tailnet>:9000}${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
+  say "     ${DIM}saúde ········${C0} ${BOLD}${BESZEL_URL:-http://<ip-tailnet>:8090}${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
   say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
   say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"
   say "     ${DIM}credenciais ··${C0} ${BOLD}/root/${SLUG}-credenciais.txt${C0}"
@@ -1130,7 +1148,8 @@ registrar_base(){
     printf 'BASE_DOMAIN=%q\n' "$APP_DOMAIN"
     printf 'LE_EMAIL=%q\n' "$LE_EMAIL"
     printf 'TAILSCALE_IP=%q\n' "${TSIP:-}"
-    printf 'BESZEL_URL=%q\n' "http://${TSIP:-}:8090"
+    printf 'PORTAINER_URL=%q\n' "${PORTAINER_URL:-http://${TSIP:-}:9000}"
+    printf 'BESZEL_URL=%q\n' "${BESZEL_URL:-http://${TSIP:-}:8090}"
     printf 'CERT_RESOLVER=%q\n' "le"
     printf 'INSTALLED_AT=%q\n' "$(date -Iseconds)"
   } > /etc/motobase/base.env

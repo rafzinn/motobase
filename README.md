@@ -37,7 +37,9 @@ A fundação não é reinstalada quando um projeto novo é criado.
 - backup local diário;
 - smoke tests ao final.
 
-O painel Beszel já nasce registrado e fica em `http://<IP-TAILSCALE>:8090`.
+Os painéis já nascem registrados em DNS privado: Portainer em
+`http://portainer.<domínio>:9000` e Beszel em `http://monitor.<domínio>:8090`.
+Ambos resolvem para o IP Tailscale da VPS e só abrem dentro da Tailnet.
 O wizard pergunta somente nome, domínio, e-mail e credenciais opcionais de
 Cloudflare, Claude, OpenAI, Telegram e Tailscale. Senhas internas e decisões
 técnicas são geradas automaticamente.
