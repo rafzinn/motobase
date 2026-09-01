@@ -69,10 +69,26 @@ ask(){
   printf -v "$target" '%s' "${input_value:-$default}"
 }
 
+read_masked(){ # $1=prompt; resultado em REPLY
+  local prompt="$1" char value=""
+  printf '%b' "  ${ORANGE}?${C0} ${prompt} ${DIM}(cole aqui · Enter pula)${C0}: " >&2
+  while IFS= read -r -s -n 1 char; do
+    [[ -z "$char" ]] && break
+    case "$char" in
+      $'\177'|$'\b')
+        [[ -n "$value" ]] && { value="${value%?}"; printf '\b \b' >&2; }
+        ;;
+      *) value+="$char"; printf '*' >&2 ;;
+    esac
+  done
+  printf '\n' >&2
+  REPLY="$value"
+}
+
 ask_secret(){
   local target="$1" prompt="$2" input_value=""
-  read -r -s -p "$(printf '%b' "  ${ORANGE}?${C0} ${prompt} ${DIM}(Enter pula)${C0}: ")" input_value || true
-  printf '\n' >&2
+  read_masked "$prompt"
+  input_value="$REPLY"
   printf -v "$target" '%s' "$input_value"
 }
 

@@ -58,6 +58,23 @@ die(){ say "\n     ${RED}✗ $*${C0}\n"; exit 1; }
 ask(){ local __v=$1 __p=$2 __d=${3:-}; local r
   read -rp "$(echo -e "     ${LRJ}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r
   printf -v "$__v" '%s' "${r:-$__d}"; }
+# Mantém o segredo fora da tela/gravação, mas dá feedback visual ao digitar ou colar.
+# Não usar `read -s` simples: ele aceita o paste, porém parece que nada aconteceu.
+read_masked(){ # $1=prompt; resultado em REPLY
+  local prompt="$1" char value=""
+  printf '%b' "     ${LRJ}?${C0} ${prompt} ${DIM}(cole aqui · Enter pula)${C0}: " >&2
+  while IFS= read -r -s -n 1 char; do
+    [[ -z "$char" ]] && break
+    case "$char" in
+      $'\177'|$'\b')
+        [[ -n "$value" ]] && { value="${value%?}"; printf '\b \b' >&2; }
+        ;;
+      *) value+="$char"; printf '*' >&2 ;;
+    esac
+  done
+  printf '\n' >&2
+  REPLY="$value"
+}
 pw(){ openssl rand -base64 18 | tr -d '/+=' | head -c 20; }
 
 swarm_secret(){
@@ -79,8 +96,8 @@ caixa_fecha(){ say "     ${AMB}▙$(regua $((LARGURA-6)))${C0}"; say ""; }
 ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
   local v
   while true; do
-    read -r -s -p "$(echo -e "     ${LRJ}?${C0} ${2} ${DIM}(oculto · Enter pula)${C0}: ")" v || true
-    printf '\n' >&2
+    read_masked "$2"
+    v="$REPLY"
     [[ -z "$v" ]] && break
     [[ "$v" =~ $3 ]] && break
     warn "esse valor não parece certo — esperado algo como: ${4}"

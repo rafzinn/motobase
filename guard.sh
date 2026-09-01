@@ -23,7 +23,20 @@ info(){ say "  ${DIM}├─${C0} $*"; }
 warn(){ say "  ${AMB}⚠${C0} $*"; }
 die(){ say "\n  ${RED}✗ $*${C0}\n"; exit 1; }
 ask(){ local __v=$1 __p=$2 __d=${3:-}; local r; read -rp "$(echo -e "  ${AMB}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r; printf -v "$__v" '%s' "${r:-$__d}"; }
-asksecret(){ local __v=$1 __p=$2; local r; read -rsp "$(echo -e "  ${AMB}?${C0} ${__p}: ")" r; echo; printf -v "$__v" '%s' "$r"; }
+read_masked(){ # $1=prompt; resultado em REPLY
+  local prompt="$1" char value=""
+  printf '%b' "  ${AMB}?${C0} ${prompt} ${DIM}(cole aqui)${C0}: " >&2
+  while IFS= read -r -s -n 1 char; do
+    [[ -z "$char" ]] && break
+    case "$char" in
+      $'\177'|$'\b') [[ -n "$value" ]] && { value="${value%?}"; printf '\b \b' >&2; } ;;
+      *) value+="$char"; printf '*' >&2 ;;
+    esac
+  done
+  printf '\n' >&2
+  REPLY="$value"
+}
+asksecret(){ local __v=$1 __p=$2; read_masked "$__p"; printf -v "$__v" '%s' "$REPLY"; }
 
 say ""
 say "  ${RED}🛡️  ${BOLD}${CRM}MOTOBASE GUARD${C0} ${DIM}— módulo blindagem${C0}"
