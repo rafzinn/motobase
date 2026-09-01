@@ -139,6 +139,7 @@ banner(){
   say ""
   say "          ${BOLD}DO ZERO À BASE DA SUA STARTUP. EM UMA LINHA.${C0}"
   say "       ${DIM}Infra pronta para criar, publicar e crescer sem bagunça.${C0}"
+  say "       ${DIM}por Rafael Ventura · ${C0}${ORANGE}rafaelventura.com.br${C0}${DIM} · ${C0}${ORANGE}github.com/rafzinn${C0}"
   say ""
 }
 
@@ -669,8 +670,8 @@ smoke_foundation(){
 
 main_menu(){
   load_state
+  banner
   while true; do
-    banner
     say "  ${BOLD}FUNDAÇÃO${C0}  ${GREEN}● ONLINE${C0}"
     say "  ${DIM}${BASE_NAME} · Swarm · Traefik · Portainer · Dados · Tailnet${C0}\n"
     say "  ${ORANGE}[1]${C0} Novo site simples       ${ORANGE}[2]${C0} Novo WordPress"
@@ -692,9 +693,9 @@ main_menu(){
 main(){
   ensure_root
   [[ "$ACTION" == help ]] && { help_text; return; }
-  banner
 
   if ! foundation_present; then
+    banner
     install_foundation
     foundation_present || return 0
   fi

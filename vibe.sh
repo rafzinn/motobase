@@ -235,7 +235,7 @@ banner(){
   say ""
   say "   ${CHIP} M O T O B A S E ${C0}  ${BOLD}DO ZERO À BASE DA SUA STARTUP. EM UMA LINHA.${C0}"
   say "   ${DIM}Infra pronta para criar, publicar e crescer sem bagunça.${C0}"
-  say "   ${DIM}por Rafael Ventura × Fable 5${SEED:+  ·  semente: ${SEED}}${C0}"
+  say "   ${DIM}por Rafael Ventura × Fable 5  ·  ${C0}${LRJ}rafaelventura.com.br${C0}${DIM}  ·  ${C0}${LRJ}github.com/rafzinn${C0}${DIM}${SEED:+  ·  semente: ${SEED}}${C0}"
   say "  ${DIM}$(regua $LARGURA)${C0}"
 }
 
