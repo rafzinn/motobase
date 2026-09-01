@@ -135,7 +135,8 @@ banner(){
   say "   ${LRJ_ESC} ╚████╔╝ ██║██████╔╝███████╗${C0}"
   say "   ${LRJ_ESC}  ╚═══╝  ╚═╝╚═════╝ ╚══════╝${C0}"
   say ""
-  say "   ${CHIP} M O T O B A S E ${C0}  ${BOLD}uma base · muitos projetos · tudo no lugar${C0}"
+  say "   ${CHIP} M O T O B A S E ${C0}  ${BOLD}DO ZERO À BASE DA SUA STARTUP. EM UMA LINHA.${C0}"
+  say "   ${DIM}Infra pronta para criar, publicar e crescer sem bagunça.${C0}"
   say "   ${DIM}por Rafael Ventura × Fable 5${SEED:+  ·  semente: ${SEED}}${C0}"
   say "  ${DIM}$(regua $LARGURA)${C0}"
 }
@@ -267,10 +268,29 @@ questionario(){
   info "identificador técnico: ${BOLD}${SLUG}${C0} ${DIM}(banco, stacks, secrets)${C0}"
 
   say ""
-  say "     ${BOLD}Cloudflare${C0} ${DIM}— cria o subdomínio agora, enquanto o restante instala${C0}"
-  sub "Create Token → modelo 'Edit zone DNS' → Zone Resources: a zona do seu domínio"
+  say "     ${BOLD}Cloudflare DNS${C0} ${DIM}— cria os subdomínios enquanto o restante instala${C0}"
+  sub "conta nova: crie a conta, adicione o domínio e troque os nameservers no registrador"
+  link "https://dash.cloudflare.com/sign-up"
+  sub "espere o domínio aparecer como Active em Websites; depois crie o token abaixo"
+  link "https://dash.cloudflare.com/"
+  sub "My Profile → API Tokens → Create Token → modelo 'Edit zone DNS'"
+  sub "Zone Resources: Include → Specific zone → selecione o domínio do cliente"
+  sub "este token é SOMENTE para DNS; o R2 usa outro par de chaves no módulo /guard"
   link "https://dash.cloudflare.com/profile/api-tokens"
-  ask_tok CFTOK "Token da API Cloudflare" '^[A-Za-z0-9_-]{30,60}$' "40 caracteres de letras, números, _ e -"
+  while true; do
+    ask_tok CFTOK "Token Cloudflare para editar DNS" '^[A-Za-z0-9_-]{30,60}$' "cfut_…"
+    [[ -z "$CFTOK" || "$DRY" == "--dry-run" ]] && break
+    local cf_status
+    cf_status=$(curl -fsS --max-time 10 -H "Authorization: Bearer ${CFTOK}" \
+      https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null \
+      | grep -o '"status":"active"' || true)
+    if [[ -n "$cf_status" ]]; then
+      ok "Token Cloudflare válido e ativo"
+      break
+    fi
+    warn "a Cloudflare não reconheceu esse token como ativo"
+    sub "cole novamente; Enter pula e mostra como configurar o DNS manualmente"
+  done
 
   BASE_DOMAIN=""; SUBDOMAIN=""
   if [[ -n "$CFTOK" ]]; then
@@ -315,25 +335,28 @@ questionario(){
   [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${email_domain}"; LE_EMAIL="admin@${email_domain}"; }
 
   say ""
-  say "     ${BOLD}Claude${C0} ${DIM}— o programador desta VPS${C0}"
+  say "     ${BOLD}Claude${C0} ${DIM}— opcional · o programador desta VPS${C0}"
   sub "jeito fácil: rode 'claude setup-token' no SEU computador e cole aqui"
   link "https://console.anthropic.com/settings/keys"
   ask_tok CLTOK "Token do Claude" '^sk-ant-' "sk-ant-oat01-… ou sk-ant-api03-…"
 
   say ""
-  say "     ${BOLD}OpenAI${C0} ${DIM}— se o produto for usar IA da OpenAI${C0}"
+  say "     ${BOLD}OpenAI${C0} ${DIM}— opcional · para aplicações que usam a API${C0}"
+  sub "crie a conta, adicione faturamento e gere uma chave do projeto"
+  link "https://platform.openai.com/settings/organization/billing/overview"
   link "https://platform.openai.com/api-keys"
   ask_tok OAKEY "Chave da OpenAI" '^sk-' "sk-proj-…"
 
   say ""
-  say "     ${BOLD}Telegram${C0} ${DIM}— alertas de saúde e backup da VPS${C0}"
+  say "     ${BOLD}Telegram${C0} ${DIM}— opcional · bots e alertas de aplicações futuras${C0}"
   sub "fale com o @BotFather, mande /newbot e copie o token; Enter pula"
   link "https://t.me/BotFather"
   ask_tok TGTOK "Token do bot Telegram" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
 
   say ""
-  say "     ${BOLD}Tailscale${C0} ${DIM}— rede privada de gestão${C0}"
-  sub "em Keys, clique 'Generate auth key' (sem ela, o script para num link de login)"
+  say "     ${BOLD}Tailscale${C0} ${DIM}— necessário · rede privada de gestão${C0}"
+  sub "conta nova: entrar já cria sua Tailnet; em Keys clique 'Generate auth key'"
+  sub "use chave de uso único, não efêmera; sem ela o instalador abre um link de login"
   link "https://login.tailscale.com/admin/settings/keys"
   ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…"
 
@@ -1141,7 +1164,7 @@ resumo(){
 
 registrar_base(){
   [[ "$DRY" == "--dry-run" || -z "$BASE_ONLY" ]] && return 0
-  mkdir -p /etc/motobase
+  mkdir -p /etc/motobase /opt/projetos
   {
     printf 'BASE_NAME=%q\n' "$PROJ_NAME"
     printf 'BASE_SLUG=%q\n' "$SLUG"

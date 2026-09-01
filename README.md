@@ -2,7 +2,9 @@
 
 # 🦀 Motobase
 
-**Uma base. Muitos projetos. Tudo no lugar.**
+**Do zero à base da sua startup. Em uma linha.**
+
+Infra pronta para criar, publicar e crescer sem bagunça.
 
 Instale a fundação uma vez. Volte quando quiser para criar o próximo projeto.
 
@@ -47,6 +49,24 @@ técnicas são geradas automaticamente.
 Quando o token da Cloudflare é informado, o wizard pede o domínio principal e
 o subdomínio personalizado separadamente, cria o registro A no começo da
 instalação e aproveita o restante do processo para a propagação do DNS.
+
+## Contas e credenciais
+
+Nada de uma VPS anterior é reutilizado. Para uma instalação totalmente nova:
+
+| Plataforma | Usada para | Credencial | Momento |
+|---|---|---|---|
+| Cloudflare DNS | Criar os subdomínios | Token `Edit zone DNS` da zona do cliente | Instalação-base |
+| Tailscale | Rede privada dos painéis | Auth key de uso único e não efêmera | Instalação-base |
+| Claude | Programação na VPS | Token/API key, opcional | Instalação-base |
+| OpenAI | IA das futuras aplicações | API key de projeto, opcional | Instalação-base |
+| Telegram | Bots e alertas futuros | Token criado pelo BotFather, opcional | Instalação-base |
+| Cloudflare R2 | Backup externo | Endpoint S3 + Access Key ID + Secret Access Key | Módulo `/guard` |
+| GitHub | Cópia externa do código | Fine-grained token | Módulo `/guard` |
+
+O token de DNS da Cloudflare e as credenciais do R2 são independentes. O
+monitor externo via Cloudflare Worker ainda não é provisionado pelo wizard;
+ele é uma integração separada.
 
 ## Projetos disponíveis
 

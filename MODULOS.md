@@ -23,8 +23,8 @@ bash <(curl -fsSL https://get.motobot.com.br)
 O que separa um projeto de estimação de um sistema que aguenta o mundo real:
 
 - **Firewall + SSH endurecido + fail2ban** — a porta fecha, o robô de força-bruta é banido.
-- **Backup diário → Cloudflare R2** — 10GB **gratuitos**; seus bancos e sites
-  dormem fora do servidor, todo dia às 03:00, com retenção de 30 dias.
+- **Backup diário → Cloudflare R2** — seus bancos e sites dormem fora do
+  servidor, todo dia às 04:00, com retenção de 30 dias.
 - **Auto-commit → GitHub privado** — seu código com cópia externa a cada 30min,
   cada commit **assinado com quem estava logado** (usuário@IP). Servidor pode
   pegar fogo; seu trabalho, não.

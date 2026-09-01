@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  MOTOBASE — uma base, muitos projetos, tudo no lugar.
+#  MOTOBASE — do zero à base da sua startup, em uma linha.
 #
 #  bash <(curl -fsSL https://get.motobot.com.br)
 #
@@ -102,8 +102,8 @@ banner(){
   say "${ORANGE} ██║ ╚═╝ ██║╚██████╔╝   ██║   ╚██████╔╝██████╔╝██║  ██║███████║███████╗${C0}"
   say "${ORANGE} ╚═╝     ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝${C0}"
   say ""
-  say "             ${BOLD}UMA BASE. MUITOS PROJETOS. TUDO NO LUGAR.${C0}"
-  say "  ${DIM}Instale a fundação uma vez. Volte quando quiser para criar o próximo.${C0}"
+  say "          ${BOLD}DO ZERO À BASE DA SUA STARTUP. EM UMA LINHA.${C0}"
+  say "       ${DIM}Infra pronta para criar, publicar e crescer sem bagunça.${C0}"
   say ""
 }
 
