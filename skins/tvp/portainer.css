@@ -41,7 +41,7 @@
 .form-control:focus{border-color:#B0512E!important;box-shadow:0 0 0 3px rgba(176,81,46,.22)!important;outline:none!important}
 a{color:#97431F}
 /* sem venda da Business Edition dentro do produto unificado */
-button[class*="023959"]{display:none!important}
+button[class*="border-blue-9"][class*="bg-["][class*="text-white"]{display:none!important}
 
 /* rodapé da sidebar: legenda própria com o ícone Docker (máscara = tinta nossa) */
 [class*="sidebar-Footer-Footer-module"] > div,
