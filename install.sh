@@ -158,7 +158,7 @@ foundation_present(){
 }
 
 load_state(){
-  BASE_NAME="Motobase"; BASE_SLUG="motobase"; BASE_DOMAIN=""; LE_EMAIL=""
+  BASE_NAME="Motobase"; BASE_SLUG="motobase"; BASE_DOMAIN=""; LE_EMAIL=""; PORTAINER_URL=""
   TAILSCALE_IP=""; CERT_RESOLVER="le"
   if [[ -f "${STATE_REAL}/base.env" ]]; then
     # shellcheck disable=SC1091
@@ -171,6 +171,14 @@ load_state(){
       CERT_RESOLVER="letsencryptresolver"
     fi
   fi
+  # Instalações antigas guardavam o endereço de uma app em BASE_DOMAIN. O painel
+  # Portainer sempre usa portainer.<domínio-base>, então ele recupera a raiz sem
+  # exigir nenhuma migração manual do aluno.
+  local portainer_host="${PORTAINER_URL#http://}"
+  portainer_host="${portainer_host#https://}"
+  portainer_host="${portainer_host%%/*}"
+  portainer_host="${portainer_host%%:*}"
+  [[ "$portainer_host" == portainer.* ]] && BASE_DOMAIN="${portainer_host#portainer.}"
   return 0
 }
 
@@ -276,15 +284,16 @@ https_smoke(){
 }
 
 project_questions(){
-  local kind="$1"
+  local kind="$1" suggested_domain
   while true; do
     ask PROJECT_NAME "Nome do ${kind}"
     PROJECT_SLUG=$(slugify "$PROJECT_NAME")
     [[ "$PROJECT_SLUG" =~ ^[a-z][a-z0-9-]*$ ]] && break
     warn "Use um nome com letras."
   done
+  suggested_domain="${PROJECT_SLUG}.${BASE_DOMAIN}"
   while true; do
-    ask PROJECT_DOMAIN "Domínio"
+    ask PROJECT_DOMAIN "Endereço do ${kind}" "$suggested_domain"
     PROJECT_DOMAIN=$(normalize_domain "$PROJECT_DOMAIN")
     [[ "$PROJECT_DOMAIN" == *.* && "$PROJECT_DOMAIN" != *..* \
       && "$PROJECT_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break

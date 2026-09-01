@@ -231,11 +231,6 @@ preflight(){
   fi
 }
 
-# cria/atualiza o registro A na Cloudflare (nuvem cinza) — falha vira aviso, nunca derruba
-cf_dns_auto(){
-  cf_dns_record "$APP_DOMAIN" "$IP" "público · DNS only para emissão do HTTPS"
-}
-
 cf_dns_record(){
   local record_domain="$1" target_ip="$2" purpose="${3:-DNS only}"
   if [[ "$DRY" == "--dry-run" ]]; then
@@ -279,7 +274,7 @@ questionario(){
   etapa "1/${TOTAL_STEPS}" "QUESTIONÁRIO" "responde tudo agora e vai tomar um café · Enter pula credencial"
 
   while true; do
-    ask PROJ_NAME "Nome do projeto/startup"
+    ask PROJ_NAME "Nome da VPS ou cliente"
     SLUG=$(printf '%s' "${PROJ_NAME}" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null \
       | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' || true)
     SLUG=${SLUG:0:24}
@@ -291,7 +286,7 @@ questionario(){
   info "identificador técnico: ${BOLD}${SLUG}${C0} ${DIM}(banco, stacks, secrets)${C0}"
 
   say ""
-  say "     ${BOLD}Cloudflare DNS${C0} ${DIM}— cria os subdomínios enquanto o restante instala${C0}"
+  say "     ${BOLD}Cloudflare DNS${C0} ${DIM}— cria os endereços privados dos painéis${C0}"
   sub "conta nova: crie a conta, adicione o domínio e troque os nameservers no registrador"
   link "https://dash.cloudflare.com/sign-up"
   sub "espere o domínio aparecer como Active em Websites; depois crie o token abaixo"
@@ -315,45 +310,45 @@ questionario(){
     sub "cole novamente; Enter pula e mostra como configurar o DNS manualmente"
   done
 
-  BASE_DOMAIN=""; SUBDOMAIN=""
-  if [[ -n "$CFTOK" ]]; then
-    while true; do
-      ask BASE_DOMAIN "Domínio principal na Cloudflare (ex: seusite.com.br)"
-      BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr '[:upper:]' '[:lower:]' \
-        | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
-      [[ "$BASE_DOMAIN" == *.* && "$BASE_DOMAIN" != *..* \
-        && "$BASE_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break
-      warn "digite o domínio principal da zona, como meusite.com.br"
-    done
-    while true; do
-      ask SUBDOMAIN "Subdomínio personalizado desta VPS" "$SLUG"
-      SUBDOMAIN=$(echo "$SUBDOMAIN" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-      [[ "$SUBDOMAIN" != *..* && "$SUBDOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] && break
-      warn "use letras, números, pontos ou hífens, sem começar/terminar com hífen"
-    done
-    APP_DOMAIN="${SUBDOMAIN}.${BASE_DOMAIN}"
-    info "endereço escolhido: ${BOLD}https://${APP_DOMAIN}${C0}"
-    cf_dns_auto
+  while true; do
+    ask BASE_DOMAIN "Domínio base da marca (ex: seusite.com.br)"
+    BASE_DOMAIN=$(echo "$BASE_DOMAIN" | tr '[:upper:]' '[:lower:]' \
+      | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
+    [[ "$BASE_DOMAIN" == *.* && "$BASE_DOMAIN" != *..* \
+      && "$BASE_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break
+    warn "digite apenas o domínio principal, como meusite.com.br"
+  done
+  APP_DOMAIN=""
+  if [[ -n "$BASE_ONLY" ]]; then
+    info "nenhuma aplicação será criada agora"
+    sub "quando criar um site ou WordPress, o endereço sugerido será nome-do-projeto.${BASE_DOMAIN}"
+    if [[ -n "$CFTOK" ]]; then
+      sub "a Cloudflare criará depois apenas portainer.${BASE_DOMAIN} e monitor.${BASE_DOMAIN}"
+    else
+      sub "sem token Cloudflare, os endereços privados dos painéis deverão ser criados manualmente depois"
+    fi
   else
     while true; do
-      ask APP_DOMAIN "Domínio completo do projeto (ex: app.seudominio.com.br)"
+      ask APP_DOMAIN "Domínio completo do projeto" "${SLUG}.${BASE_DOMAIN}"
       APP_DOMAIN=$(echo "$APP_DOMAIN" | tr '[:upper:]' '[:lower:]' \
         | sed -e 's|^https\?://||' -e 's|/.*$||' | tr -d ' ')
       [[ "$APP_DOMAIN" == *.* && "$APP_DOMAIN" != *..* \
         && "$APP_DOMAIN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])$ ]] && break
       warn "isso não parece um domínio (ex: app.meusite.com.br)"
     done
-    caixa_abre
-    caixa_txt "${BOLD}DNS NA MÃO, ENTÃO${C0}"
-    caixa_txt ""
-    caixa_txt "No painel do seu DNS, crie um registro tipo ${BOLD}A${C0} apontando"
-    caixa_txt "${BOLD}${APP_DOMAIN}${C0} pro IP deste servidor: ${BOLD}${IP}${C0}"
-    caixa_txt ""
-    caixa_txt "${DIM}Na primeira emissão do HTTPS, deixe a nuvem CINZA (DNS only).${C0}"
-    caixa_fecha
+    if [[ -n "$CFTOK" ]]; then
+      cf_dns_record "$APP_DOMAIN" "$IP" "público · DNS only para emissão do HTTPS"
+    else
+      caixa_abre
+      caixa_txt "${BOLD}DNS NA MÃO, ENTÃO${C0}"
+      caixa_txt "No painel do seu DNS, crie um registro tipo ${BOLD}A${C0} apontando"
+      caixa_txt "${BOLD}${APP_DOMAIN}${C0} pro IP deste servidor: ${BOLD}${IP}${C0}"
+      caixa_txt "${DIM}Na primeira emissão do HTTPS, deixe a nuvem CINZA (DNS only).${C0}"
+      caixa_fecha
+    fi
   fi
 
-  local email_domain="${BASE_DOMAIN:-${APP_DOMAIN#*.}}"
+  local email_domain="$BASE_DOMAIN"
   ask LE_EMAIL "E-mail pro certificado HTTPS (Let's Encrypt)" "admin@${email_domain}"
   [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${email_domain}"; LE_EMAIL="admin@${email_domain}"; }
 
@@ -396,11 +391,13 @@ questionario(){
   fi
 
   say ""
-  info "conferindo propagação de ${APP_DOMAIN}…"
-  local resolved; resolved=$(getent hosts "$APP_DOMAIN" | awk '{print $1}' | head -1 || true)
-  if [[ "$resolved" == "$IP" ]]; then ok "DNS propagado: ${APP_DOMAIN} → ${IP}"
-  elif [[ -n "$resolved" ]]; then warn "${APP_DOMAIN} resolve pra ${resolved} (esperava ${IP})"; sub "se a nuvem laranja da Cloudflare está ligada, é normal"
-  else warn "ainda não resolve"; sub "o HTTPS pode falhar na 1ª tentativa e se corrigir sozinho depois"
+  if [[ -n "$APP_DOMAIN" ]]; then
+    info "conferindo propagação de ${APP_DOMAIN}…"
+    local resolved; resolved=$(getent hosts "$APP_DOMAIN" | awk '{print $1}' | head -1 || true)
+    if [[ "$resolved" == "$IP" ]]; then ok "DNS propagado: ${APP_DOMAIN} → ${IP}"
+    elif [[ -n "$resolved" ]]; then warn "${APP_DOMAIN} resolve pra ${resolved} (esperava ${IP})"; sub "se a nuvem laranja da Cloudflare está ligada, é normal"
+    else warn "ainda não resolve"; sub "o HTTPS pode falhar na 1ª tentativa e se corrigir sozinho depois"
+    fi
   fi
 
   # conferência final — errou algo? refaz sem dó
@@ -408,8 +405,13 @@ questionario(){
   say ""
   say "  ${DIM}$(regua $LARGURA)${C0}"
   say "     ${BOLD}CONFERE AÍ${C0}"
-  say "       ${DIM}projeto ····${C0} ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
-  say "       ${DIM}domínio ····${C0} https://${APP_DOMAIN}"
+  say "       ${DIM}base ·······${C0} ${PROJ_NAME}  ${DIM}(${SLUG})${C0}"
+  say "       ${DIM}domínio base ·${C0} ${BASE_DOMAIN}"
+  if [[ -n "$APP_DOMAIN" ]]; then
+    say "       ${DIM}projeto ·····${C0} https://${APP_DOMAIN}"
+  else
+    say "       ${DIM}aplicação ··${C0} ${DIM}nenhuma criada agora${C0}"
+  fi
   say "       ${DIM}e-mail ·····${C0} ${LE_EMAIL}"
   m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="informado ${DIM}(DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
   m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="informado"; say "       ${DIM}claude ·····${C0} ${m}"
@@ -429,7 +431,8 @@ questionario(){
   cred(){ echo "$*" >> "$CRED"; }
   cred "══════ ${PROJ_NAME} — credenciais geradas em $(date '+%d/%m/%Y %H:%M') ══════"
   cred "Servidor: $(hostname)  IP: ${IP}"
-  cred "Projeto: https://${APP_DOMAIN}"
+  cred "Domínio base: ${BASE_DOMAIN}"
+  [[ -n "$APP_DOMAIN" ]] && cred "Projeto: https://${APP_DOMAIN}" || cred "Aplicação: nenhuma criada nesta instalação"
   if [[ -n "$CFTOK" ]]; then
     # fonte única do token Cloudflare: arquivo root-only (o Claude da VPS usa daqui)
     mkdir -p "${D}/root/.config/cloudflare"; chmod 700 "${D}/root/.config/cloudflare"
@@ -1036,8 +1039,8 @@ antes de criar qualquer coisa.
 - Saúde: Beszel em \`${BESZEL_URL:-http://<ip-tailnet>:8090}\` (CPU, RAM, disco, rede e containers; só-tailnet).
 - Secrets no Swarm (fonte única, NUNCA copiar valor em texto plano): ${SLUG}_pg_password,
   ${SLUG}_jwt_secret${TGTOK:+, ${SLUG}_tg_token}${OAKEY:+, ${SLUG}_openai_key}. Ler em runtime via /run/secrets/.
-- App: template pronto em /opt/${SLUG}/app.yml (imagem \`${SLUG}-api\`, porta 3000,
-  host ${APP_DOMAIN}); deploy: \`docker stack deploy -c /opt/${SLUG}/app.yml ${SLUG}-app\`.
+- Aplicações: nenhuma publicada ainda. Crie um site ou WordPress pelo comando principal da
+  Motobase; cada projeto recebe sua própria stack, domínio e backup sem reinstalar esta base.
 - Gestão SÓ-TAILNET: Portainer :9000${QUER_MOLT:+, moltbot :18789} (lockdown na chain DOCKER-USER + unit
   gestao-lockdown; porta publicada pelo Docker ignora ufw). Rota /admin da app: middleware
   \`tailnet-only\` + priority 2000 (exemplo comentado no app.yml).
@@ -1202,7 +1205,12 @@ resumo(){
   say "  ${GRN}${BOLD}  FUNDAÇÃO DO ${PROJ_NAME^^} PRONTA${C0}"
   say "  ${GRN}$(regua $LARGURA)${C0}"
   say ""
-  say "     ${DIM}projeto ······${C0} ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
+  say "     ${DIM}domínio base ·${C0} ${BOLD}${BASE_DOMAIN}${C0}"
+  if [[ -n "$APP_DOMAIN" ]]; then
+    say "     ${DIM}projeto ······${C0} ${BOLD}https://${APP_DOMAIN}${C0} ${DIM}(no ar quando a sua app subir)${C0}"
+  else
+    say "     ${DIM}aplicação ····${C0} ${DIM}nenhuma criada — use o mesmo curl para criar um site ou WordPress${C0}"
+  fi
   say "     ${DIM}gestão ·······${C0} ${BOLD}${PORTAINER_URL:-http://<ip-tailnet>:9000}${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
   say "     ${DIM}saúde ········${C0} ${BOLD}${BESZEL_URL:-http://<ip-tailnet>:8090}${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
   say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
@@ -1285,7 +1293,7 @@ registrar_base(){
   {
     printf 'BASE_NAME=%q\n' "$PROJ_NAME"
     printf 'BASE_SLUG=%q\n' "$SLUG"
-    printf 'BASE_DOMAIN=%q\n' "$APP_DOMAIN"
+    printf 'BASE_DOMAIN=%q\n' "$BASE_DOMAIN"
     printf 'LE_EMAIL=%q\n' "$LE_EMAIL"
     printf 'TAILSCALE_IP=%q\n' "${TSIP:-}"
     printf 'PORTAINER_URL=%q\n' "${PORTAINER_URL:-http://${TSIP:-}:9000}"
@@ -1305,7 +1313,7 @@ if [[ -n "$REPAIR_BESZEL" ]]; then
   if [[ -r /etc/motobase/base.env ]]; then
     # shellcheck disable=SC1091
     source /etc/motobase/base.env
-    PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN="$BASE_DOMAIN"
+    PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN=""
     TSIP="${TAILSCALE_IP:-}"
   else
     # A instalação pode ter parado antes de registrar o estado final.

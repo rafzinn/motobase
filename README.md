@@ -42,13 +42,15 @@ A fundação não é reinstalada quando um projeto novo é criado.
 Os painéis já nascem registrados em DNS privado: Portainer em
 `http://portainer.<domínio>:9000` e Beszel em `http://monitor.<domínio>:8090`.
 Ambos resolvem para o IP Tailscale da VPS e só abrem dentro da Tailnet.
-O wizard pergunta somente nome, domínio, e-mail e credenciais opcionais de
+O wizard pergunta somente nome interno da VPS/cliente, domínio base, e-mail e credenciais opcionais de
 Cloudflare, Claude, OpenAI, Telegram e Tailscale. Senhas internas e decisões
 técnicas são geradas automaticamente.
 
-Quando o token da Cloudflare é informado, o wizard pede o domínio principal e
-o subdomínio personalizado separadamente, cria o registro A no começo da
-instalação e aproveita o restante do processo para a propagação do DNS.
+Na fundação, nenhum site ou aplicação é criado. Com o token da Cloudflare, o
+wizard cria somente `portainer.<domínio>` e `monitor.<domínio>` para os painéis
+privados após conectar a VPS à Tailnet. Ao criar um site ou WordPress depois,
+ele sugere automaticamente `nome-do-projeto.<domínio>` — e você pode trocar
+por outro domínio completo se precisar.
 
 ## Contas e credenciais
 
@@ -56,7 +58,7 @@ Nada de uma VPS anterior é reutilizado. Para uma instalação totalmente nova:
 
 | Plataforma | Usada para | Credencial | Momento |
 |---|---|---|---|
-| Cloudflare DNS | Criar os subdomínios | Token `Edit zone DNS` da zona do cliente | Instalação-base |
+| Cloudflare DNS | Criar os endereços dos painéis e projetos | Token `Edit zone DNS` da zona do cliente | Instalação-base / novo projeto |
 | Tailscale | Rede privada dos painéis | Auth key de uso único e não efêmera | Instalação-base |
 | Claude | Programação na VPS | Token/API key, opcional | Instalação-base |
 | OpenAI | IA das futuras aplicações | API key de projeto, opcional | Instalação-base |
