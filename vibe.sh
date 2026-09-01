@@ -92,12 +92,16 @@ caixa_abre(){ say ""; say "     ${AMB}▛$(regua $((LARGURA-6)))${C0}"; }
 caixa_txt(){  say "     ${AMB}▌${C0} $*"; }
 caixa_fecha(){ say "     ${AMB}▙$(regua $((LARGURA-6)))${C0}"; say ""; }
 
-# Token fica visível para conferência e copy/paste; senhas usam read_masked.
+# Token fica mascarado com asteriscos; remove espaços acidentais do clipboard
+# antes de validar para a colagem não falhar por caractere invisível.
 # pergunta token com validação de formato; Enter pula
 ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
   local v
   while true; do
-    read -r -p "$(echo -e "     ${LRJ}?${C0} ${2} ${DIM}(cole aqui · Enter pula)${C0}: ")" v || true
+    read_masked "$2"
+    v="$REPLY"
+    v="${v//$'\r'/}"; v="${v//$'\n'/}"; v="${v//$'\t'/}"; v="${v// /}"
+    v="${v//$'\u00A0'/}"; v="${v//$'\u200B'/}"
     [[ -z "$v" ]] && break
     [[ "$v" =~ $3 ]] && break
     warn "esse valor não parece certo — esperado algo como: ${4}"

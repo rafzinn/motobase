@@ -92,6 +92,16 @@ ask_secret(){
   printf -v "$target" '%s' "$input_value"
 }
 
+ask_token(){
+  local target="$1" prompt="$2" input_value=""
+  read_masked "$prompt"
+  input_value="$REPLY"
+  input_value="${input_value//$'\r'/}"; input_value="${input_value//$'\n'/}"
+  input_value="${input_value//$'\t'/}"; input_value="${input_value// /}"
+  input_value="${input_value//$'\u00A0'/}"; input_value="${input_value//$'\u200B'/}"
+  printf -v "$target" '%s' "$input_value"
+}
+
 confirm(){
   local prompt="$1" default="${2:-s}" answer
   ask answer "$prompt (s/n)" "$default"
@@ -192,7 +202,7 @@ cloudflare_token(){
   local token_file="/root/.config/cloudflare/token" token=""
   [[ -r "$token_file" ]] && token=$(<"$token_file")
   if [[ -z "$token" ]]; then
-    ask token "Token Cloudflare para criar o DNS automaticamente"
+    ask_token token "Token Cloudflare para criar o DNS automaticamente"
     if [[ -n "$token" && -z "$DRY" ]]; then
       install -d -m 700 /root/.config/cloudflare
       printf '%s\n' "$token" > "$token_file"

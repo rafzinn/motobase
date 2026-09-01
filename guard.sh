@@ -23,7 +23,6 @@ info(){ say "  ${DIM}├─${C0} $*"; }
 warn(){ say "  ${AMB}⚠${C0} $*"; }
 die(){ say "\n  ${RED}✗ $*${C0}\n"; exit 1; }
 ask(){ local __v=$1 __p=$2 __d=${3:-}; local r; read -rp "$(echo -e "  ${AMB}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r; printf -v "$__v" '%s' "${r:-$__d}"; }
-asktoken(){ local __v=$1 __p=$2; local r; read -rp "$(echo -e "  ${AMB}?${C0} ${__p} ${DIM}(cole aqui)${C0}: ")" r; printf -v "$__v" '%s' "$r"; }
 read_masked(){ # $1=prompt; resultado em REPLY
   local prompt="$1" char value=""
   printf '%b' "  ${AMB}?${C0} ${prompt} ${DIM}(cole aqui)${C0}: " >&2
@@ -38,6 +37,14 @@ read_masked(){ # $1=prompt; resultado em REPLY
   REPLY="$value"
 }
 asksecret(){ local __v=$1 __p=$2; read_masked "$__p"; printf -v "$__v" '%s' "$REPLY"; }
+asktoken(){
+  local __v=$1 __p=$2 value
+  read_masked "$__p"
+  value="$REPLY"
+  value="${value//$'\r'/}"; value="${value//$'\n'/}"; value="${value//$'\t'/}"; value="${value// /}"
+  value="${value//$'\u00A0'/}"; value="${value//$'\u200B'/}"
+  printf -v "$__v" '%s' "$value"
+}
 
 say ""
 say "  ${RED}🛡️  ${BOLD}${CRM}MOTOBASE GUARD${C0} ${DIM}— módulo blindagem${C0}"
@@ -180,7 +187,7 @@ if [[ "$WANTGH" =~ ^[sS] ]]; then
   say "  ${DIM}Token: https://github.com/settings/personal-access-tokens/new"
   say "  GitHub → Settings → Developer settings → Fine-grained tokens"
   say "  → Generate: All repositories + Contents (RW) + Administration (RW)${C0}"
-  asktoken GH_TOKEN "Cole o token"
+  asktoken GH_TOKEN "Cole o token (aparece como asteriscos)"
   ask GH_DIR "Qual pasta versionar?" "/opt/projetos"
   ask GH_REPO "Nome do repositório privado" "meu-servidor"
 
