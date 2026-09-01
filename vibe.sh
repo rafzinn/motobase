@@ -1215,8 +1215,68 @@ resumo(){
   say "     ${LRJ}${BOLD}cd /opt && claude${C0}"
   say "       ${DIM}└ o CLAUDE.md daqui já apresenta o servidor pra ele — é só mandar construir${C0}"
   say ""
+  say "  ${CHIP} ACESSOS SIMPLES ${C0}"
+  say ""
+  say "     ${LRJ}${BOLD}motobase portainer-token${C0}"
+  say "       ${DIM}└ gera e mostra um token novo para a primeira tela do Portainer${C0}"
+  say "     ${LRJ}${BOLD}motobase acessos${C0}"
+  say "       ${DIM}└ mostra o usuário e a senha do painel Beszel${C0}"
+  say ""
   # || true: sob set -e, um [[ ]] falso como última linha da função derruba o script
   [[ "$DRY" == "--dry-run" ]] && warn "foi um dry-run: nada foi alterado no servidor (escritas em ${D})" || true
+}
+
+# Atalhos curtos para o aluno não precisar decorar comandos Docker nem caminhos.
+motobase_helpers(){
+  [[ "$DRY" == "--dry-run" ]] && return
+  cat > /usr/local/bin/motobase <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-ajuda}" in
+  portainer-token)
+    docker service inspect portainer_portainer >/dev/null 2>&1 || {
+      echo "Portainer não está instalado nesta VPS." >&2; exit 1;
+    }
+    echo "Gerando um token novo do Portainer…"
+    docker service update --force portainer_portainer >/dev/null
+    for _ in $(seq 1 18); do
+      token_line=$(docker service logs portainer_portainer --tail 80 2>&1 | grep -Ei 'setup.*token|token.*setup' | tail -n 1 || true)
+      if [[ -n "$token_line" ]]; then
+        echo
+        echo "Copie o token mostrado abaixo e cole na tela do Portainer:"
+        echo "$token_line"
+        exit 0
+      fi
+      sleep 2
+    done
+    echo "Ainda não apareceu. Rode este mesmo comando novamente em alguns segundos." >&2
+    exit 1
+    ;;
+  acessos)
+    [[ -r /etc/motobase/beszel-admin.env ]] || {
+      echo "Credenciais do Beszel não encontradas." >&2; exit 1;
+    }
+    # shellcheck disable=SC1091
+    source /etc/motobase/beszel-admin.env
+    echo "Beszel"
+    printf 'Usuário: %s\nSenha: %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
+    ;;
+  ajuda|-h|--help)
+    cat <<'HELP'
+Motobase — atalhos de acesso
+
+  motobase portainer-token  Gera token para concluir o primeiro acesso ao Portainer
+  motobase acessos           Mostra usuário e senha do painel Beszel
+HELP
+    ;;
+  *)
+    echo "Comando desconhecido. Use: motobase ajuda" >&2
+    exit 2
+    ;;
+esac
+EOF
+  chmod 700 /usr/local/bin/motobase
 }
 
 registrar_base(){
@@ -1236,6 +1296,7 @@ registrar_base(){
   chmod 600 /etc/motobase/base.env
   touch /etc/motobase/projects.tsv
   chmod 600 /etc/motobase/projects.tsv
+  motobase_helpers
   ok "Fundação registrada — nas próximas execuções este curl abre o gerenciador"
 }
 
@@ -1257,6 +1318,7 @@ if [[ -n "$REPAIR_BESZEL" ]]; then
   BESZEL_URL="${BESZEL_URL:-http://${TSIP}:8090}"
   cred(){ :; }
   beszel_stack
+  motobase_helpers
   exit 0
 fi
 
