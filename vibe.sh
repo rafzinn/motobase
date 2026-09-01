@@ -1129,7 +1129,7 @@ http {
       proxy_read_timeout 1h;
       proxy_buffering off;
       # text/css + JS: o Portainer injeta a paleta via JavaScript em runtime
-      sub_filter_types text/css application/javascript;
+      sub_filter_types text/css text/javascript application/javascript;
       sub_filter_once off;
       sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"></head>';
 ${subs}

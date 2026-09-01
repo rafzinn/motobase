@@ -38,3 +38,4 @@ svg[viewBox="0 0 285 75"]{
 }
 /* o index deles pinta html.dark com azul-frio inline — aqui vira o escuro quente */
 html.dark{background:#1D1B17!important}
+html.dark body{background:#1D1B17!important}
