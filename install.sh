@@ -9,6 +9,14 @@
 # =============================================================================
 set -Eeuo pipefail
 
+# nenhum diálogo pode aparecer numa instalação de servidor: sem alguém pra
+# responder, o apt trava em silêncio e a instalação morre sem explicação.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+export APT_LISTCHANGES_FRONTEND=none
+APT="apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+
 RAW_BASE="https://raw.githubusercontent.com/rafzinn/motobase/main"
 STATE_REAL="/etc/motobase"
 PROJECTS_REAL="/opt/projetos"
@@ -191,7 +199,31 @@ install_foundation(){
   confirm "Começar a instalação da fundação?" "s" || return 0
   local args=(--base)
   [[ -n "$DRY" ]] && args+=(--dry-run)
-  bash <(curl -fsSL "${RAW_BASE}/vibe.sh") "${args[@]}"
+  bash "$(motor)" "${args[@]}"
+}
+
+# Baixar com <(curl) é perigoso: se a conexão cai no meio, o bash executa um
+# script PELA METADE. Aqui o download é insistente, gravado em disco e validado
+# sintaticamente antes de rodar — download truncado nunca chega a executar.
+ETAPA_IS="preparação"
+on_err_is(){
+  say ""
+  say "  ${RED:-}✗ O gerenciador parou em: ${ETAPA_IS}${C0:-}"
+  say "     Rode o MESMO comando de novo — nada foi perdido e ele continua do ponto certo."
+  say "     Se repetir, o log da fundação fica em /var/log/motobase-instalacao.log"
+  say ""
+}
+trap on_err_is ERR
+
+motor(){
+  local dest; dest=$(mktemp)
+  curl -fsSL --connect-timeout 15 --max-time 180 --retry 4 --retry-delay 3 --retry-connrefused \
+    "${RAW_BASE}/vibe.sh" -o "$dest" 2>/dev/null \
+    || die "Não consegui baixar o instalador. Confira a internet da VPS e rode o comando de novo."
+  [[ -s "$dest" ]] || die "O instalador veio vazio no download. Rode o comando de novo."
+  bash -n "$dest" 2>/dev/null \
+    || die "O download do instalador foi interrompido e veio incompleto. Rode o comando de novo."
+  printf '%s' "$dest"
 }
 
 ensure_root(){
@@ -322,7 +354,7 @@ install_project_cron(){
     > "${CRON_DIR}/motobase-${slug}-backup"
   chmod 644 "${CRON_DIR}/motobase-${slug}-backup"
   if [[ -z "$DRY" ]]; then
-    command -v cron >/dev/null 2>&1 || apt-get install -y cron >/dev/null 2>&1
+    command -v cron >/dev/null 2>&1 || $APT install cron >/dev/null 2>&1
     systemctl enable --now cron >/dev/null 2>&1 || true
   fi
 }
@@ -669,7 +701,7 @@ main(){
 
   case "$ACTION" in
     status) smoke_foundation ;;
-    repair-beszel) bash <(curl -fsSL "${RAW_BASE}/vibe.sh") --repair-beszel ;;
+    repair-beszel) bash "$(motor)" --repair-beszel ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;

@@ -21,6 +21,28 @@
 set -euo pipefail
 set -E
 
+# ── blindagem de execução ────────────────────────────────────────────────────
+# Servidor não tem quem responda diálogo: qualquer pergunta do apt (needrestart,
+# debconf, "arquivo de configuração alterado") trava a instalação EM SILÊNCIO.
+# Estas variáveis, mais o conf.d escrito no preflight, eliminam a classe inteira.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+export APT_LISTCHANGES_FRONTEND=none
+export UCF_FORCE_CONFOLD=1
+
+# apt que ESPERA o lock em vez de morrer (VPS nova roda unattended-upgrades
+# sozinha nos primeiros minutos) e que nunca pergunta sobre config.
+APT="apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+# curl que insiste: um blip de DNS/TLS não derruba mais a instalação inteira.
+CURL="curl -fsSL --connect-timeout 15 --max-time 300 --retry 4 --retry-delay 3 --retry-connrefused"
+
+# transcrição completa — toda saída de comando é gravada para diagnóstico
+LOG="/var/log/motobase-instalacao.log"
+RUN_LIMITE_PADRAO=1200
+RUN_ROTULO=""
+RUN_LIMITE=""
+
 RAW_BASE="https://raw.githubusercontent.com/rafzinn/motobase/main"
 LARGURA=70
 
@@ -55,6 +77,7 @@ sub(){  say "       ${DIM}└ $*${C0}"; }
 link(){ say "       ${DIM}└ onde pegar:${C0} ${LRJ}$1${C0}"; }
 
 die(){ say "\n     ${RED}✗ $*${C0}\n"; exit 1; }
+# nota: quem chama die() já teve a saída do comando gravada em $LOG
 ask(){ local __v=$1 __p=$2 __d=${3:-}; local r
   read -rp "$(echo -e "     ${LRJ}?${C0} ${__p}${__d:+ ${DIM}[$__d]${C0}}: ")" r
   printf -v "$__v" '%s' "${r:-$__d}"; }
@@ -116,8 +139,13 @@ on_err(){
   say "  ${RED}✗ A instalação parou na etapa: ${BOLD}${ETAPA}${C0}"
   say "     ${DIM}Não entre em pânico: rode o MESMO comando de novo — tudo que já foi feito${C0}"
   say "     ${DIM}é reaproveitado e eu continuo do ponto certo. Se repetir o erro, mande${C0}"
-  say "     ${DIM}o print da tela pra quem te deu este instalador.${C0}"
+  say "     ${DIM}o print da tela e o arquivo abaixo pra quem te deu este instalador.${C0}"
   say ""
+  if [[ -s "${LOG:-}" ]]; then
+    say "     ${DIM}Últimas linhas de ${LOG}:${C0}"
+    tail -n 8 "$LOG" 2>/dev/null | sed 's/^/       /'
+    say ""
+  fi
 }
 trap on_err ERR
 
@@ -132,6 +160,25 @@ esac; shift; done
 
 D=""   # prefixo de escrita: em dry-run, NADA toca o disco real
 if [[ "$DRY" == "--dry-run" ]]; then D=$(mktemp -d); fi
+
+# log: em dry-run vai pra arquivo temporário; se /var/log não aceitar, cai no /tmp
+if [[ "$DRY" == "--dry-run" ]]; then LOG="$(mktemp)"
+else touch "$LOG" 2>/dev/null || LOG="/tmp/motobase-instalacao.log"; fi
+# gira enquanto o comando trabalha: nada de tela parada sem explicação
+girinho(){ # $1=pid  $2=rótulo
+  local pid="$1" rot="$2" i=0 t0=$SECONDS el ult
+  local -a q=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+  [[ -t 1 ]] || return 0
+  while kill -0 "$pid" 2>/dev/null; do
+    el=$(( SECONDS - t0 ))
+    ult=$(tail -n 1 "$LOG" 2>/dev/null | tr -d '\r\n\t' | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-38)
+    printf "\r     ${LRJ}%s${C0} %s ${DIM}%02d:%02d${C0}  ${DIM}%s${C0}\033[K" \
+      "${q[i++%10]}" "$rot" $((el/60)) $((el%60)) "$ult"
+    sleep 0.3
+  done
+  printf "\r\033[K"
+}
+
 run(){
   if [[ "$DRY" == "--dry-run" ]]; then
     if [[ "$*" == *"docker secret create"* ]]; then
@@ -141,9 +188,37 @@ run(){
     else
       say "       ${DIM}[dry-run] $*${C0}"
     fi
-  else
-    eval "$@"
+    RUN_ROTULO=""; RUN_LIMITE=""
+    return 0
   fi
+  local rot="${RUN_ROTULO:-trabalhando}" lim="${RUN_LIMITE:-$RUN_LIMITE_PADRAO}" rc=0 pid l marca
+  RUN_ROTULO=""; RUN_LIMITE=""
+  marca=$(wc -l < "$LOG" 2>/dev/null || echo 0)   # só mostrar a saída DESTE comando
+  printf '\n--- %s | %s\n%s\n' "$(date '+%F %T')" "$rot" "$*" >>"$LOG" 2>/dev/null || true
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "$lim" bash -c "$*" >>"$LOG" 2>&1 &
+  else
+    bash -c "$*" >>"$LOG" 2>&1 &
+  fi
+  pid=$!
+  girinho "$pid" "$rot"
+  wait "$pid" || rc=$?
+  if [[ $rc -eq 124 ]]; then
+    say ""
+    warn "passou de $( [[ $lim -ge 60 ]] && echo "$((lim/60)) minutos" || echo "${lim}s" ) em: ${rot}"
+    while IFS= read -r l; do sub "$l"; done < <(tail -n +$((marca+3)) "$LOG" 2>/dev/null | tail -n 6)
+    die "Interrompi para não travar a instalação para sempre.
+       Quase sempre é rede lenta ou espelho de pacotes fora do ar.
+       Log completo: ${LOG}
+       Rode o MESMO comando de novo — o que já subiu é reaproveitado."
+  fi
+  if [[ $rc -ne 0 ]]; then
+    say ""
+    warn "falhou: ${rot} ${DIM}(código ${rc})${C0}"
+    while IFS= read -r l; do sub "$l"; done < <(tail -n +$((marca+3)) "$LOG" 2>/dev/null | tail -n 6)
+    sub "log completo: ${LOG}"
+  fi
+  return $rc
 }
 
 TOTAL_STEPS=9
@@ -191,6 +266,14 @@ preflight(){
   ok "Servidor ${BOLD}$(hostname)${C0} — IP público ${BOLD}${IP}${C0}"
   ok "Sistema ${BOLD}${PRETTY_NAME:-Linux}${C0} · ${mem_mb}MB RAM · ${disk_gb}GB livres"
 
+  # needrestart pergunta "quais serviços reiniciar?" depois de cada apt e, com a
+  # saída silenciada, essa pergunta trava tudo sem aparecer na tela. Desarmado aqui.
+  if [[ "$DRY" != "--dry-run" && -d /etc/needrestart ]]; then
+    mkdir -p /etc/needrestart/conf.d
+    printf '$nrconf{restart} = "a";\n$nrconf{kernelhints} = 0;\n' \
+      > /etc/needrestart/conf.d/99-motobase.conf 2>/dev/null || true
+  fi
+
   # VPS recém-criada costuma estar atualizando sozinha — espera o apt liberar
   if command -v fuser >/dev/null 2>&1; then
     local w=0
@@ -224,9 +307,9 @@ preflight(){
   SEED_DIR=""
   if [[ -n "$SEED" ]]; then
     SEED_DIR=$(mktemp -d)
-    curl -fsSL "${RAW_BASE}/seeds/${SEED}/CLAUDE.md" -o "${SEED_DIR}/CLAUDE.md" 2>/dev/null \
+    $CURL "${RAW_BASE}/seeds/${SEED}/CLAUDE.md" -o "${SEED_DIR}/CLAUDE.md" 2>/dev/null \
       || die "Semente '${SEED}' não encontrada no repo (seeds/${SEED}/)."
-    curl -fsSL "${RAW_BASE}/seeds/${SEED}/ddl.sql" -o "${SEED_DIR}/ddl.sql" 2>/dev/null || true
+    $CURL "${RAW_BASE}/seeds/${SEED}/ddl.sql" -o "${SEED_DIR}/ddl.sql" 2>/dev/null || true
     ok "Semente ${BOLD}${SEED}${C0} baixada$([[ -f ${SEED_DIR}/ddl.sql ]] && echo ' (com schema de banco)')"
   fi
 }
@@ -449,15 +532,16 @@ docker_swarm(){
   etapa "2/${TOTAL_STEPS}" "DOCKER + SWARM" "o motor que roda tudo, com auto-restart"
   if ! command -v jq >/dev/null || ! command -v openssl >/dev/null; then
     info "instalando utilitários básicos…"
-    run "apt-get update >/dev/null 2>&1 && apt-get install -y ca-certificates curl jq openssl >/dev/null 2>&1"
+    RUN_ROTULO="instalando utilitários base"
+    run "$APT update && $APT install ca-certificates curl jq openssl"
   fi
   # Segurança do host desde o primeiro dia. A blindagem definitiva do SSH fica
   # para depois que o aluno validar a entrada privada pela Tailnet.
   if [[ "$DRY" == "--dry-run" ]]; then
     say "       ${DIM}[dry-run] instalaria fail2ban e atualizações de segurança automáticas${C0}"
   else
-    apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq fail2ban unattended-upgrades >/dev/null 2>&1 || true
+    $APT update -qq >/dev/null 2>&1 || true
+    $APT install -qq fail2ban unattended-upgrades >/dev/null 2>&1 || true
     systemctl enable --now fail2ban >/dev/null 2>&1 || true
     dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
     ok "Proteção do host: fail2ban + atualizações de segurança automáticas"
@@ -466,10 +550,11 @@ docker_swarm(){
   if ! command -v docker >/dev/null; then
     info "instalando Docker (script oficial)…"
     if [[ "$DRY" == "--dry-run" ]]; then
-      run "curl -fsSL https://get.docker.com | sh"
+      RUN_ROTULO="instalando o Docker"
+      run "$CURL https://get.docker.com | sh"
     else
       local docker_log="/tmp/motobase-docker-install.log"
-      if ! curl -fsSL https://get.docker.com | sh >"$docker_log" 2>&1; then
+      if ! $CURL https://get.docker.com | sh >"$docker_log" 2>&1; then
         warn "o instalador oficial do Docker retornou erro"
         sub "últimas linhas do diagnóstico:"
         tail -n 18 "$docker_log" >&2 || true
@@ -481,11 +566,13 @@ docker_swarm(){
   command -v docker >/dev/null || die "O instalador terminou, mas o comando docker não apareceu. Veja /tmp/motobase-docker-install.log e rode o mesmo comando de novo."
   ok "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo instalado)"
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" != "active" ]]; then
-    run "docker swarm init --advertise-addr ${IP} >/dev/null"
+    RUN_ROTULO="iniciando o Docker Swarm"
+    run "docker swarm init --advertise-addr ${IP}"
   fi
   ok "Swarm ativo"
   sub "se um serviço cair, o Swarm sobe outro sozinho"
-  docker network inspect web >/dev/null 2>&1 || run "docker network create -d overlay --attachable web >/dev/null"
+  RUN_ROTULO="criando a rede interna"
+  docker network inspect web >/dev/null 2>&1 || run "docker network create -d overlay --attachable web"
   ok "Rede overlay ${BOLD}web${C0}"
 }
 
@@ -531,7 +618,8 @@ services:
 networks:
   web: { external: true }
 EOF
-  run "docker stack deploy --detach=true -c /opt/traefik/stack.yml traefik >/dev/null 2>&1"
+  RUN_ROTULO="subindo o Traefik (HTTPS)"
+  run "docker stack deploy --detach=true -c /opt/traefik/stack.yml traefik"
   ok "Traefik no ar"
   sub "certificado Let's Encrypt emitido sozinho quando o domínio apontar pra cá"
 }
@@ -587,7 +675,8 @@ secrets:
   ${SLUG}_redis_password: { external: true }
 volumes: { pgdata: {}, redisdata: {} }
 EOF
-  run "docker stack deploy --detach=true -c /opt/${SLUG}/stack.yml ${SLUG} >/dev/null 2>&1"
+  RUN_ROTULO="subindo Postgres e Redis"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/stack.yml ${SLUG}"
   ok "Postgres ${BOLD}${SLUG}_postgres${C0} · Redis ${BOLD}${SLUG}_redis${C0}"
   sub "rede interna '${SLUG}_internal' — banco e redis não ficam expostos na web"
   cred ""; cred "Postgres: host ${SLUG}_postgres:5432  db ${SLUG}  user postgres"
@@ -605,7 +694,7 @@ banco_pronto(){
     info "aguardando o Postgres subir…"
     local i=0 CID=""
     until CID=$(docker ps -q -f name="${SLUG}_postgres" | head -1) && [[ -n "$CID" ]] \
-      && docker exec "$CID" pg_isready -U postgres >/dev/null 2>&1; do
+      && docker exec "$CID" pg_isready -U postgres; do
       i=$((i+1)); [[ $i -gt 60 ]] && die "Postgres não subiu em 2 minutos — rode o comando de novo; se repetir, veja: docker service ps ${SLUG}_postgres"
       sleep 2
     done
@@ -696,7 +785,8 @@ tailscale_gestao(){
   info "Portainer e Beszel só abrem com o Tailscale ligado no SEU dispositivo"
   if ! command -v tailscale >/dev/null; then
     info "instalando Tailscale (script oficial)…"
-    run "curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1"
+    RUN_ROTULO="instalando o Tailscale"
+    run "$CURL https://tailscale.com/install.sh | sh"
   fi
   if [[ "$DRY" == "--dry-run" ]]; then
     say "       ${DIM}[dry-run] tailscale up${TSKEY:+ --authkey=***}${C0}"; TSIP="100.x.y.z"
@@ -753,7 +843,8 @@ networks:
 volumes:
   pdata:
 EOF
-  run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer >/dev/null 2>&1"
+  RUN_ROTULO="subindo o Portainer"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
 
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
   # DOCKER-USER, e precisa sobreviver a reboot (script + unit systemd).
@@ -787,7 +878,8 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-  run "systemctl daemon-reload && systemctl enable --now gestao-lockdown.service >/dev/null 2>&1"
+  RUN_ROTULO="ativando o firewall de gestão"
+  run "systemctl daemon-reload && systemctl enable --now gestao-lockdown.service"
   ok "Firewall de gestão ativo ${DIM}(persistente a reboot)${C0}"
   sub "do IP público as portas 9000/8090/18789 nem respondem — só pela tailnet"
 
@@ -890,7 +982,7 @@ EOF
   fi
 
   if ! docker secret inspect beszel_agent_key >/dev/null 2>&1 \
-    || ! docker secret inspect beszel_agent_token >/dev/null 2>&1; then
+    || ! docker secret inspect beszel_agent_token; then
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
         '{identity:$identity,password:$password}')" \
@@ -907,9 +999,9 @@ EOF
     [[ -n "$key" && "$token" == "$requested_token" && "$token_active" == true && "$token_permanent" == true ]] \
       || die "Beszel não confirmou o token persistente do Agent. Rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"
     docker secret inspect beszel_agent_key >/dev/null 2>&1 \
-      || printf '%s' "$key" | docker secret create beszel_agent_key - >/dev/null
+      || printf '%s' "$key" | docker secret create beszel_agent_key -
     docker secret inspect beszel_agent_token >/dev/null 2>&1 \
-      || printf '%s' "$token" | docker secret create beszel_agent_token - >/dev/null
+      || printf '%s' "$token" | docker secret create beszel_agent_token -
   fi
 
   write_beszel_stack "$dir/stack.yml" "$version"
@@ -923,7 +1015,7 @@ EOF
   i=0
   until curl -fsS --max-time 5 -H "Authorization: ${auth}" \
     "http://127.0.0.1:8090/api/collections/systems/records?perPage=100" \
-    | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)' >/dev/null 2>&1; do
+    | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)'; do
     i=$((i+1)); [[ $i -gt 20 ]] && { warn "Beszel Agent ainda não apareceu no painel — a fundação continuará normalmente"; sub "investigar: docker service logs beszel_agent --tail 80"; return 0; }
     sleep 3
   done
@@ -994,7 +1086,8 @@ claude_code(){
   etapa "7/${TOTAL_STEPS}" "CLAUDE CODE" "o programador desta VPS, pronto pra receber ordens"
   if ! command -v node >/dev/null || [[ "$(node -v 2>/dev/null | grep -oP '\d+' | head -1)" -lt 20 ]]; then
     info "instalando Node.js 22 (NodeSource)…"
-    run "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1 && apt-get install -y nodejs >/dev/null 2>&1"
+    RUN_ROTULO="instalando o Node.js 22"
+    run "$CURL https://deb.nodesource.com/setup_22.x | bash - && $APT install nodejs"
   fi
   ok "Node $(node -v 2>/dev/null || echo '(dry-run)')"
 
@@ -1002,12 +1095,14 @@ claude_code(){
   # 'gh auth login' faz login pelo navegador (device flow), sem colar segredo no terminal.
   if ! command -v git >/dev/null || ! command -v gh >/dev/null; then
     info "instalando git e GitHub CLI…"
-    run "apt-get install -y git >/dev/null 2>&1 || true"
+    RUN_ROTULO="instalando o git"
+    run "$APT install git || true"
     if ! command -v gh >/dev/null; then
-      run "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null 2>&1 \
+      RUN_ROTULO="instalando o GitHub CLI"
+      run "$CURL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
         && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
         && echo 'deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main' > /etc/apt/sources.list.d/github-cli.list \
-        && apt-get update >/dev/null 2>&1 && apt-get install -y gh >/dev/null 2>&1 || true"
+        && $APT update && $APT install gh || true"
     fi
   fi
   if [[ "$DRY" != "--dry-run" ]] && command -v git >/dev/null; then
@@ -1025,7 +1120,8 @@ claude_code(){
   if ! command -v claude >/dev/null; then
     info "instalando Claude Code…"
     # falha aqui NÃO derruba a infra — dá pra instalar depois
-    run "npm install -g @anthropic-ai/claude-code >/dev/null 2>&1" \
+    RUN_ROTULO="instalando o Claude Code"
+    run "npm install -g @anthropic-ai/claude-code" \
       || warn "não consegui instalar o Claude Code agora — depois rode: npm install -g @anthropic-ai/claude-code"
   fi
   command -v claude >/dev/null && ok "Claude Code $(claude --version 2>/dev/null | head -1 || echo instalado)" || true
@@ -1138,7 +1234,8 @@ volumes:
   moltbot_workspace:
 EOF
   chmod 600 "${D}/opt/${SLUG}/moltbot.yml"   # contém token/chave — root-only
-  run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot >/dev/null 2>&1"
+  RUN_ROTULO="subindo o moltbot"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot"
   ok "Moltbot no ar: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789${C0}"
   sub "gateway token oculto e salvo no arquivo de credenciais"
   sub "1º acesso: o browser vira device 'Pending' — aprove com:"
@@ -1175,7 +1272,7 @@ EOF
   printf '10 3 * * * root /opt/%s/backup.sh >> /var/log/%s-backup.log 2>&1\n' "$SLUG" "$SLUG" > "${D}/etc/cron.d/${SLUG}-backup"
   chmod 644 "${D}/etc/cron.d/${SLUG}-backup"
   if [[ "$DRY" != "--dry-run" ]]; then
-    command -v cron >/dev/null 2>&1 || apt-get install -y cron >/dev/null 2>&1 || true
+    command -v cron >/dev/null 2>&1 || $APT install cron >/dev/null 2>&1 || true
     systemctl enable --now cron >/dev/null 2>&1 || true
     if "${D}/opt/${SLUG}/backup.sh" >/dev/null 2>&1; then
       local first_backup
