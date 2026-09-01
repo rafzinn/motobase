@@ -835,7 +835,8 @@ services:
     volumes: [pdata:/data]
     networks: [agent]
     ports:
-      - { target: 9000, published: 9000, mode: host }
+      # porta interna: quem atende o aluno na 9000 é o servico 'pele' (visual TVP)
+      - { target: 9000, published: 9010, mode: host }
     deploy:
       placement: { constraints: [node.role == manager] }
 networks:
@@ -843,6 +844,11 @@ networks:
 volumes:
   pdata:
 EOF
+  # logo própria (campo oficial --logo) se o arquivo já estiver publicado
+  if $CURL --max-time 10 -o /dev/null "https://get.motobot.com.br/brand/motobase-logo.png" 2>/dev/null; then
+    sed -i 's|command: -H tcp://tasks.agent:9001 --tlsskipverify|command: -H tcp://tasks.agent:9001 --tlsskipverify --logo https://get.motobot.com.br/brand/motobase-logo.png|' "${D}/opt/${SLUG}/portainer.yml"
+    sub "logo própria aplicada no Portainer"
+  fi
   RUN_ROTULO="subindo o Portainer"
   run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
 
@@ -852,7 +858,7 @@ EOF
 #!/usr/bin/env bash
 # Trava portas de GESTÃO pra aceitarem só tailnet (100.64/10) e localhost.
 set -e
-PORTS="9000 8090 18789"   # 9000=Portainer · 8090=Beszel · 18789=moltbot
+PORTS="9000 8090 9010 8091 18789"   # 9000/8090=pele (Portainer/Beszel) · 9010/8091=diretas · 18789=moltbot
 iptables -N GESTAO-TAILNET 2>/dev/null || true
 iptables -F GESTAO-TAILNET
 for p in $PORTS; do
@@ -893,6 +899,7 @@ EOF
   cred "IP tailnet do servidor: ${TSIP}"
 
   beszel_stack
+  pele_stack
 }
 
 # ── Beszel: painel leve de CPU, RAM, disco, rede e containers ─────────────────
@@ -946,7 +953,8 @@ services:
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
-      - { target: 8090, published: 8090, mode: host }
+      # porta interna: quem atende o aluno na 8090 é o servico 'pele' (visual TVP)
+      - { target: 8090, published: 8091, mode: host }
     deploy:
       placement: { constraints: [node.role == manager] }
 volumes:
@@ -959,7 +967,7 @@ EOF
 
   info "configurando o painel e registrando esta VPS…"
   local i=0
-  until curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" >/dev/null 2>&1; do
+  until curl -fsS --max-time 3 "http://127.0.0.1:8091/api/health" >/dev/null 2>&1; do
     i=$((i+1)); [[ $i -gt 30 ]] && die "Beszel Hub não respondeu em 90 segundos — veja: docker service ps beszel_hub"
     sleep 3
   done
@@ -986,13 +994,13 @@ EOF
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
         '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
+      "http://127.0.0.1:8091/api/collections/users/auth-with-password" | jq -r '.token // empty')
     [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais preservadas em /etc/motobase/beszel-admin.env."
     key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
-      "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
+      "http://127.0.0.1:8091/api/beszel/getkey" | jq -r '.key // empty')
     requested_token=$(openssl rand -hex 32)
     token_response=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
-      "http://127.0.0.1:8090/api/beszel/universal-token?enable=1&permanent=1&token=${requested_token}")
+      "http://127.0.0.1:8091/api/beszel/universal-token?enable=1&permanent=1&token=${requested_token}")
     token=$(jq -r '.token // empty' <<<"$token_response")
     token_active=$(jq -r '.active // false' <<<"$token_response")
     token_permanent=$(jq -r '.permanent // false' <<<"$token_response")
@@ -1010,11 +1018,11 @@ EOF
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
         '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
+      "http://127.0.0.1:8091/api/collections/users/auth-with-password" | jq -r '.token // empty')
   fi
   i=0
   until curl -fsS --max-time 5 -H "Authorization: ${auth}" \
-    "http://127.0.0.1:8090/api/collections/systems/records?perPage=100" \
+    "http://127.0.0.1:8091/api/collections/systems/records?perPage=100" \
     | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)'; do
     i=$((i+1)); [[ $i -gt 20 ]] && { warn "Beszel Agent ainda não apareceu no painel — a fundação continuará normalmente"; sub "investigar: docker service logs beszel_agent --tail 80"; return 0; }
     sleep 3
@@ -1042,7 +1050,8 @@ services:
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
-      - { target: 8090, published: 8090, mode: host }
+      # porta interna: quem atende o aluno na 8090 é o servico 'pele' (visual TVP)
+      - { target: 8090, published: 8091, mode: host }
     healthcheck:
       test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
       interval: 120s
@@ -1053,7 +1062,7 @@ services:
   agent:
     image: henrygd/beszel-agent:${version}
     environment:
-      HUB_URL: http://127.0.0.1:8090
+      HUB_URL: http://127.0.0.1:8091
       KEY_FILE: /run/secrets/beszel_agent_key
       TOKEN_FILE: /run/secrets/beszel_agent_token
       SYSTEM_NAME: ${SLUG}
@@ -1078,6 +1087,92 @@ volumes:
   agent_data: {}
 EOF
   chmod 600 "$target"
+}
+
+# ── pele: Portainer e Beszel vestidos com a identidade da casa ───────────────
+# Um nginx em rede host assume as portas 9000/8090 e injeta o CSS da pele,
+# reescrevendo as cores no caminho. Se qualquer coisa falhar, os painéis
+# continuam funcionando com o visual padrão — a pele nunca derruba a gestão.
+pele_stack(){
+  ETAPA="pele dos painéis"
+  info "vestindo Portainer e Beszel com a identidade da casa…"
+  mkdir -p "${D}/opt/pele"
+  local pele_ok=1
+  $CURL "${RAW_BASE}/skins/tvp/portainer.css" -o "${D}/opt/pele/portainer.css" 2>/dev/null || pele_ok=0
+  $CURL "${RAW_BASE}/skins/tvp/beszel.css"    -o "${D}/opt/pele/beszel.css"    2>/dev/null || pele_ok=0
+  $CURL "${RAW_BASE}/skins/tvp/azuis.map"     -o "${D}/opt/pele/azuis.map"     2>/dev/null || pele_ok=0
+  if [[ $pele_ok -eq 0 ]]; then
+    warn "não consegui baixar a pele agora — painéis seguem com o visual padrão"
+    sub "pra aplicar depois: rode o mesmo comando de novo"
+    return 0
+  fi
+  local subs="" de para
+  while read -r de para; do
+    [[ -n "$de" && -n "$para" ]] && subs+="      sub_filter '${de}' '${para}';"$'\n'
+  done < "${D}/opt/pele/azuis.map"
+  cat > "${D}/opt/pele/nginx.conf" <<PELECONF
+events {}
+http {
+  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
+  server {
+    listen 9000;
+    client_max_body_size 512m;
+    location = /tvp-skin.css { default_type text/css; alias /pele/portainer.css; }
+    location / {
+      proxy_pass http://127.0.0.1:9010;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Forwarded-For \$remote_addr;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+      proxy_set_header Accept-Encoding "";
+      proxy_read_timeout 1h;
+      proxy_buffering off;
+      sub_filter_types text/css;
+      sub_filter_once off;
+      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"></head>';
+${subs}
+    }
+  }
+  server {
+    listen 8090;
+    location = /tvp-skin.css { default_type text/css; alias /pele/beszel.css; }
+    location / {
+      proxy_pass http://127.0.0.1:8091;
+      proxy_http_version 1.1;
+      proxy_set_header Host \$host;
+      proxy_set_header X-Forwarded-For \$remote_addr;
+      proxy_set_header Upgrade \$http_upgrade;
+      proxy_set_header Connection \$connection_upgrade;
+      proxy_set_header Accept-Encoding "";
+      proxy_read_timeout 1h;
+      proxy_buffering off;
+      sub_filter_once on;
+      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"></head>';
+    }
+  }
+}
+PELECONF
+  cat > "${D}/opt/pele/pele.yml" <<'PELEYML'
+version: "3.8"
+services:
+  pele:
+    image: nginx:alpine
+    volumes:
+      - /opt/pele/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /opt/pele:/pele:ro
+    networks: [hostnet]
+    deploy:
+      placement: { constraints: [node.role == manager] }
+networks:
+  hostnet:
+    external: true
+    name: host
+PELEYML
+  RUN_ROTULO="subindo a pele dos painéis"
+  run "docker stack deploy --detach=true -c /opt/pele/pele.yml pele"
+  ok "Painéis vestidos com a identidade da casa"
+  sub "endereços do aluno não mudam: Portainer :9000 · Beszel :8090"
 }
 
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
@@ -1298,7 +1393,7 @@ prova_real(){
   [[ "$DRY" == "--dry-run" ]] && return 0
   say ""
   say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
-  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent beszel_hub beszel_agent"
+  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent beszel_hub beszel_agent pele_pele"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
   while true; do
@@ -1349,6 +1444,7 @@ resumo(){
     say "     ${DIM}aplicação ····${C0} ${DIM}nenhuma criada — use o mesmo curl para criar um site ou WordPress${C0}"
   fi
   say "     ${DIM}gestão ·······${C0} ${BOLD}${PORTAINER_URL:-http://<ip-tailnet>:9000}${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
+  say "     ${DIM}visual ·······${C0} pele TVP nos painéis ${DIM}(nude · quina perfeita · terracota)${C0}"
   say "     ${DIM}saúde ········${C0} ${BOLD}${BESZEL_URL:-http://<ip-tailnet>:8090}${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
   say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
   say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"

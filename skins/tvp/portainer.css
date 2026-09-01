@@ -1,0 +1,44 @@
+/* ── Motobase · pele TVP para o Portainer ──────────────────────────────────
+   Re-pinta as PRIMITIVAS da paleta; a camada semântica herda sozinha.     */
+:root{
+  --white-color:#FBFAF6; --black-color:#23211C;
+  --ui-white:#FBFAF6; --ui-black:#23211C;
+  /* corpo, superfícies e cinzas → nude de papel */
+  --grey-62:#F2F0E9; --grey-13:#F7F5EF; --grey-10:#EDEAE0; --grey-17:#F2F0E9;
+  --grey-14:#EDEAE0; --grey-16:#E4E0D3; --grey-12:#E4E0D3; --grey-11:#E4E0D3;
+  --grey-9:#EDEAE0; --grey-43:#DCD8C9; --grey-45:#DCD8C9; --grey-59:#DCD8C9;
+  --grey-61:#DCD8C9; --grey-19:#DCD8C9; --grey-44:#C3BDA9; --grey-42:#DCD8C9;
+  --grey-41:#A29B87; --grey-46:#C3BDA9; --grey-47:#C3BDA9; --grey-48:#C3BDA9;
+  --grey-23:#EDEAE0; --grey-24:#F7F5EF; --grey-21:#F6E8E1; --grey-18:#F6E8E1;
+  --grey-20:#F6E8E1; --grey-58:#F6E8E1; --grey-40:#F6E8E1;
+  --grey-25:#56524A; --grey-26:#706B60; --grey-7:#706B60; --grey-8:#A29B87;
+  --grey-31:#706B60; --grey-57:#A29B87; --grey-49:rgba(35,33,28,.54);
+  --mist-50:#FBFAF6; --mist-100:#F7F5EF; --mist-200:#F2F0E9; --mist-300:#E8E5DA;
+  /* sidebar → tinta quente da TVP */
+  --graphite-600:#3A362E; --graphite-700:#2B2822; --graphite-800:#23211C; --graphite-900:#1D1B17;
+  /* ação: todo azul vira terracota */
+  --blue-1:#97431F; --blue-2:#B0512E; --blue-3:#C75E37; --blue-4:#7C3719;
+  --blue-5:#612B14; --blue-6:#C75E37; --blue-7:#D9714A; --blue-8:#E0A98D;
+  --blue-9:#D9714A; --blue-10:#D9714A; --blue-11:#D9714A; --blue-12:#D9714A;
+  --blue-14:#97431F; --blue-15:#D9714A;
+  --ui-blue-1:#FAF0EA; --ui-blue-2:#F6E8E1; --ui-blue-3:#EDCDBD; --ui-blue-4:#E0A98D;
+  --ui-blue-5:#D9714A; --ui-blue-6:#C75E37; --ui-blue-7:#B0512E; --ui-blue-8:#B0512E;
+  --ui-blue-9:#97431F; --ui-blue-10:#7C3719; --ui-blue-11:#612B14;
+  --ui-gray-1:#FBFAF6; --ui-gray-2:#F7F5EF; --ui-gray-3:#F2F0E9; --ui-gray-4:#EDEAE0;
+  --ui-gray-5:#E4E0D3; --ui-gray-6:#DCD8C9; --ui-gray-7:#C3BDA9; --ui-gray-8:#A29B87;
+  --ui-gray-9:#706B60; --ui-gray-10:#56524A; --ui-gray-11:#23211C;
+  /* estado: LEDs da TVP */
+  --green-2:#1F7A3D; --green-3:#1F7A3D; --red-4:#C1272D; --red-5:#C1272D; --orange-1:#C7731F;
+}
+/* quina perfeita em tudo (identidade TVP) */
+*,*::before,*::after{border-radius:0!important}
+/* foco no tom da casa */
+:focus-visible{outline-color:#B0512E!important}
+/* ação primária e foco — classes estáveis do bootstrap do Portainer */
+.btn-primary{background-color:#B0512E!important;border-color:#B0512E!important;color:#FFF!important}
+.btn-primary:hover,.btn-primary:focus,.btn-primary:active{background-color:#97431F!important;border-color:#97431F!important}
+.btn-default,.btn-light{background-color:#FBFAF6!important;border-color:#C3BDA9!important;color:#23211C!important}
+.form-control:focus{border-color:#B0512E!important;box-shadow:0 0 0 3px rgba(176,81,46,.22)!important;outline:none!important}
+a{color:#97431F}
+/* sem venda da Business Edition dentro do produto unificado */
+button[class*="023959"]{display:none!important}
