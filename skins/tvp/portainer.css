@@ -58,3 +58,11 @@ button[class*="023959"]{display:none!important}
 }
 /* tema escuro nativo: neutros quentes (o resto herda das primitivas re-pintadas) */
 [theme="dark"] .btn-default,[theme="dark"] .btn-light{background-color:#2B2822!important;border-color:#4A4436!important;color:#F2F0E9!important}
+/* tema escuro: a folha que o JS injeta usa hexes literais — vencida por classe.
+   [class*=] alcança todo utilitário text-blue-N/bg-blue-N/border-blue-N de uma vez. */
+[theme="dark"] a{color:#E0A98D}
+[theme="dark"] a:hover,[theme="dark"] a:focus{color:#D9714A}
+[theme="dark"] [class*="text-blue-"]{color:#E0A98D!important}
+[theme="dark"] [class*="bg-blue-"]{background-color:#7C3719!important}
+[theme="dark"] [class*="border-blue-"]{border-color:#97431F!important}
+[theme="dark"] [class*="th-dark:text-blue"]{color:#E0A98D!important}
