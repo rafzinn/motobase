@@ -885,8 +885,9 @@ services:
     deploy: { mode: global }
   portainer:
     image: portainer/portainer-ce:latest
-    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    command: -H tcp://tasks.agent:9001 --tlsskipverify --admin-password-file /run/secrets/portainer_admin_pw
     volumes: [pdata:/data]
+    secrets: [portainer_admin_pw]
     networks: [agent]
     ports:
       # porta interna: quem atende o aluno na 9000 é o servico 'pele' (visual TVP)
@@ -897,11 +898,25 @@ networks:
   agent: { driver: overlay, attachable: true }
 volumes:
   pdata:
+secrets:
+  portainer_admin_pw: { external: true }
 EOF
   # logo própria (campo oficial --logo) se o arquivo já estiver publicado
   if $CURL --max-time 10 -o /dev/null "https://get.motobot.com.br/brand/motobase-logo.png" 2>/dev/null; then
-    sed -i 's|command: -H tcp://tasks.agent:9001 --tlsskipverify|command: -H tcp://tasks.agent:9001 --tlsskipverify --logo https://get.motobot.com.br/brand/motobase-logo.png|' "${D}/opt/${SLUG}/portainer.yml"
+    sed -i 's|--admin-password-file /run/secrets/portainer_admin_pw|--logo https://get.motobot.com.br/brand/motobase-logo.png --admin-password-file /run/secrets/portainer_admin_pw|' "${D}/opt/${SLUG}/portainer.yml"
     sub "logo própria aplicada no Portainer"
+  fi
+  # admin do Portainer já nasce criado (sem a dança do setup-token) — a barreira é a tailnet
+  if [[ "$DRY" != "--dry-run" ]]; then
+    PORTAINER_PW=$(pw)$(pw)
+    if docker secret inspect portainer_admin_pw >/dev/null 2>&1; then
+      PORTAINER_PW="(já definida numa instalação anterior — veja 'motobase acessos')"
+    else
+      printf '%s' "$PORTAINER_PW" | docker secret create portainer_admin_pw - >/dev/null 2>&1 || true
+mkdir -p "${D}/etc/motobase" 2>/dev/null || true
+            printf 'PORTAINER_ADMIN_USER=admin\nPORTAINER_ADMIN_PASSWORD=%q\n' "$PORTAINER_PW" > "${D}/etc/motobase/portainer-admin.env" 2>/dev/null || true
+      chmod 600 "${D}/etc/motobase/portainer-admin.env" 2>/dev/null || true
+    fi
   fi
   RUN_ROTULO="subindo o Portainer"
   run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
@@ -943,13 +958,12 @@ EOF
   ok "Firewall de gestão ativo ${DIM}(persistente a reboot)${C0}"
   sub "do IP público as portas 9000/8090/18789 nem respondem — só pela tailnet"
 
-  # Portainer novo pode exigir um setup token. Não o imprimimos automaticamente
-  # para que instalações gravadas nunca exponham credenciais na tela.
   [[ "$DRY" != "--dry-run" ]] && sleep 8
   ok "Portainer: ${BOLD}${PORTAINER_URL}${C0}"
-  sub "crie o admin em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
-  sub "se pedir 'setup token': rode ${BOLD}motobase portainer-token${C0} (mostra o código certo)"
+  sub "admin já criado — usuário ${BOLD}admin${C0}, senha em ${BOLD}motobase acessos${C0} (sem setup-token)"
   cred ""; cred "Portainer (gestão, só-tailnet): ${PORTAINER_URL}"
+  cred "  login: admin"
+  cred "  senha: ${PORTAINER_PW:-veja motobase acessos}"
   cred "IP tailnet do servidor: ${TSIP}"
 
   beszel_stack
@@ -1820,13 +1834,17 @@ case "${1:-ajuda}" in
     exit 1
     ;;
   acessos)
-    [[ -r /etc/motobase/beszel-admin.env ]] || {
-      echo "Credenciais do Beszel não encontradas." >&2; exit 1;
-    }
-    # shellcheck disable=SC1091
-    source /etc/motobase/beszel-admin.env
-    echo "Beszel"
-    printf 'Usuário: %s\nSenha: %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
+    if [[ -r /etc/motobase/portainer-admin.env ]]; then
+      # shellcheck disable=SC1091
+      source /etc/motobase/portainer-admin.env
+      echo "Portainer"; printf 'Usuário: %s\nSenha: %s\n\n' "$PORTAINER_ADMIN_USER" "$PORTAINER_ADMIN_PASSWORD"
+    fi
+    if [[ -r /etc/motobase/beszel-admin.env ]]; then
+      # shellcheck disable=SC1091
+      source /etc/motobase/beszel-admin.env
+      echo "Beszel"; printf 'Usuário: %s\nSenha: %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
+    fi
+    [[ -r /etc/motobase/portainer-admin.env || -r /etc/motobase/beszel-admin.env ]] || { echo "Credenciais não encontradas." >&2; exit 1; }
     ;;
   preparar-ssh)
     [[ -s /root/.ssh/authorized_keys ]] || {
