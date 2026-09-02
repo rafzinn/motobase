@@ -436,6 +436,17 @@ questionario(){
   [[ "$LE_EMAIL" == *@* ]] || { warn "e-mail sem @ — usando admin@${email_domain}"; LE_EMAIL="admin@${email_domain}"; }
 
   say ""
+  say "     ${BOLD}Painel de saúde (Beszel)${C0} ${DIM}— senha de acesso${C0}"
+  sub "Enter = gero uma forte automática (fica em 'motobase acessos')"
+  while true; do
+    read_masked "     ${LRJ}?${C0} Senha do painel Beszel (mín. 10, ou Enter p/ automática): "
+    BESZEL_ADMIN_PW="${REPLY//$'\r'/}"; BESZEL_ADMIN_PW="${BESZEL_ADMIN_PW// /}"
+    [[ -z "$BESZEL_ADMIN_PW" ]] && { info "ok — senha automática"; break; }
+    [[ ${#BESZEL_ADMIN_PW} -ge 10 ]] && { ok "senha do Beszel definida por você"; break; }
+    warn "muito curta — o Beszel exige pelo menos 10 caracteres"
+  done
+
+  say ""
   say "     ${BOLD}Claude${C0} ${DIM}— opcional · o programador desta VPS${C0}"
   sub "jeito fácil: rode 'claude setup-token' no SEU computador e cole aqui"
   link "https://console.anthropic.com/settings/keys"
@@ -917,6 +928,9 @@ beszel_stack(){
     admin_email="${BESZEL_ADMIN_EMAIL:-$admin_email}"
     admin_password="${BESZEL_ADMIN_PASSWORD:-}"
   fi
+  # senha escolhida no wizard tem prioridade sobre a automática (mas não sobre
+  # um admin_file já gravado numa instalação anterior — idempotência).
+  [[ -z "$admin_password" ]] && admin_password="${BESZEL_ADMIN_PW:-}"
   if [[ -z "$admin_password" ]]; then
     admin_password="$(pw)$(pw)"
     {
