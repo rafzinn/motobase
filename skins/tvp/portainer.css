@@ -79,11 +79,11 @@ div.ng-scope:has(> .simple-box-logo)::before{
           mask:var(--logo-mask) center/contain no-repeat;
 }
 /* sidebar: idem, menor, encostada à esquerda */
-a:has(> .app-react-sidebar-Header-module__logo){position:relative;display:block;min-height:34px}
+a:has(> .app-react-sidebar-Header-module__logo){position:relative;display:block;min-height:57px}
 a:has(> .app-react-sidebar-Header-module__logo) .app-react-sidebar-Header-module__logo{opacity:0}
 a:has(> .app-react-sidebar-Header-module__logo)::after{
   content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
-  width:118px;height:34px;
+  width:200px;height:57px;
   background:var(--logo-grad);
   -webkit-mask:var(--logo-mask) left center/contain no-repeat;
           mask:var(--logo-mask) left center/contain no-repeat;
