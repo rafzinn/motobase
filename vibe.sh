@@ -460,6 +460,12 @@ questionario(){
   ask_tok OAKEY "Chave da OpenAI" '^sk-' "sk-proj-…"
 
   say ""
+  say "     ${BOLD}RyzeAPI (WhatsApp)${C0} ${DIM}— opcional · pros bots de WhatsApp que você criar${C0}"
+  sub "token da SUA conta Ryze (um só serve todos os números); Enter pula"
+  link "https://ryzeapi.cloud"
+  ask_tok RYZETOK "Token da conta Ryze" '^.{16,}$' "token da conta Ryze"
+
+  say ""
   say "     ${BOLD}Telegram${C0} ${DIM}— opcional · bots e alertas de aplicações futuras${C0}"
   sub "fale com o @BotFather, mande /newbot e copie o token; Enter pula"
   link "https://t.me/BotFather"
@@ -920,6 +926,7 @@ EOF
   pele_stack
   home_stack
   instalar_claude_chat
+  instalar_wa_bot
 }
 
 # ── Beszel: painel leve de CPU, RAM, disco, rede e containers ─────────────────
@@ -1360,6 +1367,100 @@ CHATYML
   ok "Chat Claude no ar: ${BOLD}https://chat.${BASE_DOMAIN}${C0}"
   sub "só abre com o Tailscale ligado · seletor Opus/Sonnet/Haiku/Fable · custo por resposta"
   cred ""; cred "Chat Claude (só-tailnet): https://chat.${BASE_DOMAIN}"
+}
+
+# ── bot WhatsApp base: sobe se houver token Ryze + chave OpenAI ───────────────
+# Assistente de WhatsApp genérico (RyzeAPI + OpenAI, padrão do Motobot), pronto
+# pra ser "recheado" por cliente. Webhook PÚBLICO (a Ryze precisa alcançar);
+# pareamento e admin SÓ pela tailnet. O bot auto-registra a instância no boot.
+instalar_wa_bot(){
+  ETAPA="bot WhatsApp base"
+  if [[ -z "${RYZETOK:-}" ]]; then return 0; fi
+  if [[ "${OAKEY:-}" != sk-* ]]; then
+    info "bot WhatsApp pulado — precisa da chave OpenAI (o cérebro do bot é OpenAI)"
+    return 0
+  fi
+  if [[ -z "${BASE_DOMAIN:-}" || -z "${CFTOK:-}" || -z "${TSIP:-}" ]]; then
+    info "bot WhatsApp pulado — precisa de domínio base, token Cloudflare e tailnet"
+    return 0
+  fi
+  local INST_NAME; INST_NAME=$(printf '%s' "${SLUG}bot" | tr -cd '[:alnum:]')
+  info "instalando o bot WhatsApp base (instância ${INST_NAME})…"
+
+  # DNS: webhook público + pareamento só-tailnet
+  cf_dns_record "bot.${BASE_DOMAIN}" "$IP" "público · webhook do bot (a Ryze precisa alcançar)"
+  cf_dns_record "bot-admin.${BASE_DOMAIN}" "$TSIP" "privado · pareamento do bot, só pela tailnet"
+
+  mkdir -p "${D}/opt/wa-bot/lib"
+  local bot_ok=1
+  for f in package.json server.js Dockerfile .dockerignore; do
+    $CURL "${RAW_BASE}/apps/wa-bot/${f}" -o "${D}/opt/wa-bot/${f}" 2>/dev/null || bot_ok=0
+  done
+  $CURL "${RAW_BASE}/apps/wa-bot/lib/wa.js" -o "${D}/opt/wa-bot/lib/wa.js" 2>/dev/null || bot_ok=0
+  if [[ $bot_ok -eq 0 ]]; then
+    warn "não consegui baixar o bot — pulei; rode o mesmo comando de novo"
+    return 0
+  fi
+
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] construiria o bot e subiria a stack wabot${C0}"
+    ok "bot WhatsApp: ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} ${DIM}(simulação)${C0}"
+    return 0
+  fi
+
+  RUN_ROTULO="construindo a imagem do bot"
+  run "docker build -t motobase/wa-bot:local /opt/wa-bot"
+
+  # segredos: Ryze, OpenAI e o token do webhook (gerado aqui)
+  docker secret inspect ryze_account_token >/dev/null 2>&1 || printf '%s' "$RYZETOK" | docker secret create ryze_account_token - >/dev/null 2>&1
+  docker secret inspect openai_api_key >/dev/null 2>&1 || printf '%s' "$OAKEY" | docker secret create openai_api_key - >/dev/null 2>&1
+  local WHTOK; WHTOK=$(pw)$(pw)
+  docker secret inspect wa_webhook_token >/dev/null 2>&1 || printf '%s' "$WHTOK" | docker secret create wa_webhook_token - >/dev/null 2>&1
+
+  cat > "${D}/opt/wa-bot/wabot.yml" <<WABOTYML
+version: "3.8"
+services:
+  wabot:
+    image: motobase/wa-bot:local
+    environment:
+      - RYZE_INSTANCE=${INST_NAME}
+      - WA_WEBHOOK_URL=https://bot.${BASE_DOMAIN}/webhook/wa
+      - MODEL=gpt-4o-mini
+      - SYSTEM_PROMPT=Você é um assistente de atendimento no WhatsApp. Responda em português do Brasil, de forma curta, clara e cordial.
+    secrets: [ryze_account_token, openai_api_key, wa_webhook_token]
+    volumes: [wabot_data:/data]
+    networks: [web]
+    deploy:
+      placement: { constraints: [node.role == manager] }
+      labels:
+        - traefik.enable=true
+        # webhook PÚBLICO (só o path /webhook) — a Ryze precisa POSTar aqui
+        - "traefik.http.routers.wabot-hook.rule=Host(\`bot.${BASE_DOMAIN}\`) && PathPrefix(\`/webhook\`)"
+        - traefik.http.routers.wabot-hook.entrypoints=websecure
+        - traefik.http.routers.wabot-hook.tls.certresolver=le
+        - traefik.http.routers.wabot-hook.service=wabot
+        # pareamento/admin — SÓ pela tailnet
+        - "traefik.http.routers.wabot-admin.rule=Host(\`bot-admin.${BASE_DOMAIN}\`)"
+        - traefik.http.routers.wabot-admin.entrypoints=websecure
+        - traefik.http.routers.wabot-admin.tls.certresolver=ledns
+        - traefik.http.routers.wabot-admin.middlewares=tailnet-only
+        - traefik.http.routers.wabot-admin.service=wabot
+        - traefik.http.services.wabot.loadbalancer.server.port=3000
+secrets:
+  ryze_account_token: { external: true }
+  openai_api_key: { external: true }
+  wa_webhook_token: { external: true }
+volumes:
+  wabot_data:
+networks:
+  web: { external: true }
+WABOTYML
+  RUN_ROTULO="subindo o bot WhatsApp"
+  run "docker stack deploy --detach=true -c /opt/wa-bot/wabot.yml wabot"
+  ok "Bot WhatsApp no ar ${DIM}(base, esperando o número)${C0}"
+  sub "PAREAR: abra ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} com o Tailscale ligado e escaneie o QR"
+  cred ""; cred "Bot WhatsApp — pareamento (só-tailnet): https://bot-admin.${BASE_DOMAIN}"
+  cred "  webhook público: https://bot.${BASE_DOMAIN}/webhook/wa"
 }
 
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
