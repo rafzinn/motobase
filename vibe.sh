@@ -1756,6 +1756,38 @@ prova_real(){
 }
 
 # ── resumo ───────────────────────────────────────────────────────────────────
+# Painel único de acessos: escreve /etc/motobase/acessos.txt com TODOS os links e
+# portas certos (IP da tailnet pros painéis — não oscila; domínio pra home/chat/bot).
+# O aluno nunca adivinha link nem porta: 'motobase acessos' relê este arquivo.
+gerar_acessos_txt(){
+  [[ "$DRY" == "--dry-run" ]] && return 0
+  local f="${D}/etc/motobase/acessos.txt"; mkdir -p "${D}/etc/motobase"
+  local chat_on="" bot_on=""
+  [[ "${CLTOK:-}" == sk-ant-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && chat_on=1
+  [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && bot_on=1
+  {
+    echo "ACESSOS — ${PROJ_NAME}"
+    echo
+    echo "PUBLICOS (abrem de qualquer lugar):"
+    [[ -n "${BASE_DOMAIN:-}" ]] && printf '  Home ............. https://%s\n' "$BASE_DOMAIN"
+    echo
+    echo "PRIVADOS (so com o Tailscale LIGADO no seu computador):"
+    printf '  Portainer ........ http://%s:9000      (gestao dos containers)\n' "${TSIP:-<ip-tailnet>}"
+    printf '  Beszel ........... http://%s:8090      (saude da VPS)\n' "${TSIP:-<ip-tailnet>}"
+    [[ -n "$chat_on" ]] && printf '  Chat Claude ...... https://chat.%s\n' "$BASE_DOMAIN"
+    [[ -n "$bot_on" ]]  && printf '  Parear o bot ..... https://bot-admin.%s   (escaneie o QR)\n' "$BASE_DOMAIN"
+    echo
+    echo "LOGINS (o comando 'motobase acessos' mostra as senhas):"
+    echo "  Portainer: usuario 'admin'"
+    [[ -r "${D}/etc/motobase/beszel-admin.env" ]] && { # shellcheck disable=SC1090
+      source "${D}/etc/motobase/beszel-admin.env"; printf "  Beszel:    e-mail '%s'\n" "${BESZEL_ADMIN_EMAIL:-}"; }
+    [[ -n "$bot_on" ]] && echo "  Bot: pareie escaneando o QR (nao tem senha)"
+    echo
+    echo "Dica: se um endereco der 'DNS nao encontrado', espere 1-2 min (propagacao) e recarregue."
+  } > "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
 resumo(){
   ETAPA="resumo final"
   say ""
@@ -1769,15 +1801,16 @@ resumo(){
   else
     say "     ${DIM}aplicação ····${C0} ${DIM}nenhuma criada — use o mesmo curl para criar um site ou WordPress${C0}"
   fi
-  say "     ${DIM}gestão ·······${C0} ${BOLD}${PORTAINER_URL:-http://<ip-tailnet>:9000}${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
-  say "     ${DIM}saúde ········${C0} ${BOLD}${BESZEL_URL:-http://<ip-tailnet>:8090}${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
-  say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
-  say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"
-  say "     ${DIM}credenciais ··${C0} ${BOLD}/root/${SLUG}-credenciais.txt${C0}"
-  say "       ${DIM}└ chmod 600 — anote num gerenciador de senhas e apague o arquivo${C0}"
+  say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0} · fila ${SLUG}_redis"
   say ""
-  say "     ${AMB}▲${C0} Os endereços acima foram ${BOLD}recém-criados no DNS${C0} — podem levar ${BOLD}1-2 min${C0} pra abrir."
-  say "       ${DIM}└ deu 'DNS não encontrado'? espere um pouco e recarregue. É normal, não é erro.${C0}"
+  gerar_acessos_txt
+  say "  ${CHIP} ACESSOS — abra e use ${C0}"
+  say ""
+  if [[ "$DRY" != "--dry-run" && -r "${D}/etc/motobase/acessos.txt" ]]; then
+    while IFS= read -r _l; do say "     ${_l}"; done < "${D}/etc/motobase/acessos.txt"
+  fi
+  say ""
+  say "       ${DIM}└ senhas: ${BOLD}motobase acessos${C0}${DIM} · isto tudo de novo a qualquer hora${C0}"
   say ""
   say "  ${CHIP} PRÓXIMO PASSO ${C0}"
   say ""
@@ -1804,17 +1837,18 @@ set -euo pipefail
 
 case "${1:-ajuda}" in
   acessos)
+    [[ -r /etc/motobase/acessos.txt ]] && { cat /etc/motobase/acessos.txt; echo; echo "─── SENHAS ───"; }
     if [[ -r /etc/motobase/portainer-admin.env ]]; then
       # shellcheck disable=SC1091
       source /etc/motobase/portainer-admin.env
-      echo "Portainer"; printf 'Usuário: %s\nSenha: %s\n\n' "$PORTAINER_ADMIN_USER" "$PORTAINER_ADMIN_PASSWORD"
+      printf 'Portainer  admin / %s\n' "$PORTAINER_ADMIN_PASSWORD"
     fi
     if [[ -r /etc/motobase/beszel-admin.env ]]; then
       # shellcheck disable=SC1091
       source /etc/motobase/beszel-admin.env
-      echo "Beszel"; printf 'Usuário: %s\nSenha: %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
+      printf 'Beszel     %s / %s\n' "$BESZEL_ADMIN_EMAIL" "$BESZEL_ADMIN_PASSWORD"
     fi
-    [[ -r /etc/motobase/portainer-admin.env || -r /etc/motobase/beszel-admin.env ]] || { echo "Credenciais não encontradas." >&2; exit 1; }
+    [[ -r /etc/motobase/acessos.txt || -r /etc/motobase/portainer-admin.env ]] || { echo "Acessos não encontrados — a instalação terminou?" >&2; exit 1; }
     ;;
   preparar-ssh)
     [[ -s /root/.ssh/authorized_keys ]] || {
