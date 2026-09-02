@@ -58,6 +58,16 @@ CHIP='\033[48;5;173m\033[38;5;236m'   # etiqueta: fundo laranja, texto grafite
 say(){ echo -e "$*"; }
 regua(){ local n=${1:-$LARGURA}; printf '─%.0s' $(seq 1 "$n"); }
 
+# espera o apt/dpkg liberar (VPS nova roda auto-update no 1º boot)
+esperar_apt_livre(){
+  command -v fuser >/dev/null 2>&1 || return 0
+  local w=0
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    [[ $w -eq 0 ]] && info "aguardando o apt liberar (atualização automática da VPS)…"
+    sleep 5; w=$((w+5)); [[ $w -ge 600 ]] && break
+  done
+}
+
 # nível 1 — etapa
 etapa(){ # $1=n/total  $2=título  $3=subtítulo (opcional)
   local n="$1" t="$2" s="${3:-}" vis fill
@@ -280,6 +290,11 @@ preflight(){
   if [[ "$DRY" != "--dry-run" ]]; then
     mkdir -p /etc/apt/apt.conf.d
     printf 'DPkg::Lock::Timeout "600";\n' > /etc/apt/apt.conf.d/99motobase-lock 2>/dev/null || true
+  fi
+  # e desliga os gatilhos de auto-update durante a instalação — assim o apt de
+  # terceiros nunca disputa o lock no meio do caminho (a causa raiz do 01/09).
+  if [[ "$DRY" != "--dry-run" ]]; then
+    systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
   fi
 
   # VPS recém-criada costuma estar atualizando sozinha — espera o apt liberar
@@ -573,19 +588,14 @@ docker_swarm(){
     sub "SSH por senha continua só até você validar o acesso privado e rodar 'motobase preparar-ssh'"
   fi
   if ! command -v docker >/dev/null; then
-    info "instalando Docker (script oficial)…"
-    if [[ "$DRY" == "--dry-run" ]]; then
-      RUN_ROTULO="instalando o Docker"
-      run "$CURL https://get.docker.com | sh"
-    else
-      local docker_log="/tmp/motobase-docker-install.log"
-      if ! $CURL https://get.docker.com | sh >"$docker_log" 2>&1; then
-        warn "o instalador oficial do Docker retornou erro"
-        sub "últimas linhas do diagnóstico:"
-        tail -n 18 "$docker_log" >&2 || true
-        sub "log completo preservado em: ${docker_log}"
-        die "Não foi possível instalar o Docker. Corrija a causa acima e rode o MESMO comando de novo."
-      fi
+    RUN_ROTULO="instalando o Docker (script oficial)"
+    if ! run "$CURL https://get.docker.com | sh"; then
+      # quase sempre é o lock do apt disputado pelo auto-update: espera e tenta 1x mais
+      warn "1ª tentativa do Docker falhou — aguardando o apt e tentando de novo…"
+      esperar_apt_livre
+      RUN_ROTULO="instalando o Docker (2ª tentativa)"
+      run "$CURL https://get.docker.com | sh" \
+        || die "Não foi possível instalar o Docker após 2 tentativas. Veja o log (${LOG}) e rode o MESMO comando de novo — o que já subiu é reaproveitado."
     fi
   fi
   command -v docker >/dev/null || die "O instalador terminou, mas o comando docker não apareceu. Veja /tmp/motobase-docker-install.log e rode o mesmo comando de novo."
@@ -1293,7 +1303,7 @@ networks:
     external: true
 HOMEYML
   RUN_ROTULO="subindo a home de boas-vindas"
-  run "docker stack deploy --detach=true -c /opt/home/home.yml home"
+  run "docker stack deploy --detach=true -c /opt/home/home.yml home" || { warn "a home falhou ao subir — a fundação segue; rode de novo pra tentar"; return 0; }
   ok "Home no ar: ${BOLD}https://${BASE_DOMAIN}${C0}"
   sub "HTTPS emitido em ~1 min; enquanto propaga o DNS, pode dar erro de certificado"
 }
@@ -1336,7 +1346,7 @@ instalar_claude_chat(){
   fi
 
   RUN_ROTULO="construindo a imagem do chat"
-  run "docker build -t motobase/claude-chat:local /opt/claude-chat"
+  run "docker build -t motobase/claude-chat:local /opt/claude-chat" || { warn "build do chat falhou — a fundação segue; rode de novo pra tentar"; return 0; }
 
   # chave como secret (idempotente: só cria se ainda não existir)
   if ! docker secret inspect anthropic_api_key >/dev/null 2>&1; then
@@ -1371,7 +1381,7 @@ networks:
   web: { external: true }
 CHATYML
   RUN_ROTULO="subindo o chat Claude"
-  run "docker stack deploy --detach=true -c /opt/claude-chat/chat.yml chat"
+  run "docker stack deploy --detach=true -c /opt/claude-chat/chat.yml chat" || { warn "deploy do chat falhou — a fundação segue"; return 0; }
   ok "Chat Claude no ar: ${BOLD}https://chat.${BASE_DOMAIN}${C0}"
   sub "só abre com o Tailscale ligado · seletor Opus/Sonnet/Haiku/Fable · custo por resposta"
   cred ""; cred "Chat Claude (só-tailnet): https://chat.${BASE_DOMAIN}"
@@ -1417,7 +1427,7 @@ instalar_wa_bot(){
   fi
 
   RUN_ROTULO="construindo a imagem do bot"
-  run "docker build -t motobase/wa-bot:local /opt/wa-bot"
+  run "docker build -t motobase/wa-bot:local /opt/wa-bot" || { warn "build do bot falhou — a fundação segue; rode de novo pra tentar"; return 0; }
 
   # segredos: Ryze, OpenAI e o token do webhook (gerado aqui)
   docker secret inspect ryze_account_token >/dev/null 2>&1 || printf '%s' "$RYZETOK" | docker secret create ryze_account_token - >/dev/null 2>&1
@@ -1464,7 +1474,7 @@ networks:
   web: { external: true }
 WABOTYML
   RUN_ROTULO="subindo o bot WhatsApp"
-  run "docker stack deploy --detach=true -c /opt/wa-bot/wabot.yml wabot"
+  run "docker stack deploy --detach=true -c /opt/wa-bot/wabot.yml wabot" || { warn "deploy do bot falhou — a fundação segue"; return 0; }
   ok "Bot WhatsApp no ar ${DIM}(base, esperando o número)${C0}"
   sub "PAREAR: abra ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} com o Tailscale ligado e escaneie o QR"
   cred ""; cred "Bot WhatsApp — pareamento (só-tailnet): https://bot-admin.${BASE_DOMAIN}"
@@ -1934,6 +1944,17 @@ fi
 banner
 preflight
 questionario
+
+# ── acompanhamento ao vivo: quem não quer ficar no limbo abre outro terminal ──
+if [[ "$DRY" != "--dry-run" ]]; then
+  say ""
+  say "  ${CHIP} AO VIVO ${C0} ${DIM}$(regua $((LARGURA-14)))${C0}"
+  say "     Cada etapa mostra um ${LRJ}spinner${C0} com o tempo e a última linha do que roda."
+  say "     Quer ver TUDO em tempo real? Abra ${BOLD}outro terminal${C0} na VPS e rode:"
+  say "       ${LRJ}tail -f ${LOG}${C0}"
+  say ""
+fi
+
 docker_swarm
 traefik_stack
 dados_stack
