@@ -1684,6 +1684,7 @@ prova_real(){
   local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent beszel_hub beszel_agent pele_pele"
   [[ -n "${BASE_DOMAIN:-}" ]] && esperados="$esperados home_home"
   [[ "${CLTOK:-}" == sk-ant-api* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados chat_chat"
+  [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados wabot_wabot"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
   while true; do
