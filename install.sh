@@ -177,7 +177,7 @@ load_state(){
     BASE_SLUG="${BASE_SLUG:-motobase}"
     TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
     if docker network inspect web >/dev/null 2>&1; then
-      CERT_RESOLVER="letsencryptresolver"
+      CERT_RESOLVER="le"
     fi
   fi
   # Instalações antigas guardavam o endereço de uma app em BASE_DOMAIN. O painel

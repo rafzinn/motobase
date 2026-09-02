@@ -137,9 +137,11 @@ app.post('/webhook/wa', async (req, res) => {
     if (msg.fromMe || msg.isGroup || msg.isBroadcast) return;   // só 1:1 do cliente
     if (msg.type !== 'text' || !msg.text || !msg.number) return; // base: só texto (áudio fica pro produto)
     const numero = msg.number;
-    salvar.run(numero, 'user', msg.text, Date.now());
+    // responder() lê o histórico e anexa a mensagem atual — por isso salvamos
+    // DEPOIS, senão a última fala do usuário iria duplicada pro modelo.
     const resposta = await responder(numero, msg.text);
     if (!resposta) return;
+    salvar.run(numero, 'user', msg.text, Date.now());
     salvar.run(numero, 'assistant', resposta, Date.now());
     await wa.sendText(INST, null, numero, resposta);
   } catch (e) { console.error('[wa-bot] processamento:', e.message); }

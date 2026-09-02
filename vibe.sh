@@ -395,34 +395,42 @@ cf_dns_record(){
     say "       ${DIM}[dry-run] criaria o registro A ${record_domain} → ${target_ip} na Cloudflare (${purpose})${C0}"
     return 0
   fi
+  if [[ -z "${CFTOK:-}" ]]; then
+    warn "sem token Cloudflare — crie o registro A ${record_domain} → ${target_ip} manualmente"
+    return 0
+  fi
   local api="https://api.cloudflare.com/client/v4"
   local hdr="Authorization: Bearer ${CFTOK}"
-  info "Cloudflare: procurando a zona do domínio…"
+  # zona (SEM status=active: pega zona recém-adicionada/pending também)
   local d="$record_domain" zid=""
   while [[ "$d" == *.* ]]; do
-    zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}&status=active" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+    zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
     [[ -n "$zid" ]] && break
     d="${d#*.}"
   done
   if [[ -z "$zid" ]]; then
-    warn "não achei a zona de ${record_domain} nessa conta"
-    sub "confere se o token tem a zona certa; por enquanto, crie o registro A manualmente"
+    warn "não achei a zona de ${record_domain} na conta Cloudflare — crie o registro A manualmente"
     return 0
   fi
-  local rid; rid=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=A&name=${record_domain}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+  # RECONCILIA pra UM registro só: apaga TODO A/AAAA/CNAME deste nome (duplicados,
+  # IP morto de VPS antiga, CNAME velho) — mas NUNCA MX/TXT/NS (e-mail do cliente).
+  # Depois cria um A limpo apontando pro alvo. Corrige a raiz do "apex no IP morto".
+  local t rid ids
+  for t in A AAAA CNAME; do
+    ids=$(curl -fsS -H "$hdr" "${api}/zones/${zid}/dns_records?type=${t}&name=${record_domain}&per_page=100" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' || true)
+    for rid in $ids; do
+      curl -fsS -X DELETE -H "$hdr" "${api}/zones/${zid}/dns_records/${rid}" >/dev/null 2>&1 || true
+    done
+  done
   local body="{\"type\":\"A\",\"name\":\"${record_domain}\",\"content\":\"${target_ip}\",\"ttl\":300,\"proxied\":false}"
-  local sucesso=""
-  if [[ -n "$rid" ]]; then
-    sucesso=$(curl -fsS -X PUT -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records/${rid}" 2>/dev/null | grep -o '"success":true' || true)
+  local resp; resp=$(curl -fsS -X POST -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records" 2>/dev/null || true)
+  if [[ "$resp" == *'"success":true'* ]]; then
+    ok "DNS ${BOLD}${record_domain}${C0} → ${target_ip} ${DIM}(${purpose})${C0}"
   else
-    sucesso=$(curl -fsS -X POST -H "$hdr" -H 'Content-Type: application/json' -d "$body" "${api}/zones/${zid}/dns_records" 2>/dev/null | grep -o '"success":true' || true)
-  fi
-  if [[ -n "$sucesso" ]]; then
-    ok "Registro A ${BOLD}${record_domain}${C0} → ${target_ip} criado na Cloudflare"
-    sub "${purpose}"
-  else
-    warn "a Cloudflare recusou a alteração"
-    sub "o token tem permissão 'Zone.DNS Edit' nessa zona? crie o registro A manualmente"
+    warn "Cloudflare recusou ${record_domain} → ${target_ip}"
+    local msg; msg=$(printf '%s' "$resp" | grep -oP '"message":"\K[^"]*' | head -1)
+    [[ -n "$msg" ]] && sub "motivo: ${msg}"
+    sub "o token precisa de 'Zone.DNS Edit' (All zones) — ou crie o A manualmente"
   fi
 }
 
@@ -666,7 +674,8 @@ docker_swarm(){
   ok "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+' | head -1 || echo instalado)"
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" != "active" ]]; then
     RUN_ROTULO="iniciando o Docker Swarm"
-    run "docker swarm init --advertise-addr ${IP}"
+LOCAL_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0-9.]*\).*/\1/p' | head -1); [[ -n "$LOCAL_IP" ]] || LOCAL_IP="$IP"
+    run "docker swarm init --advertise-addr ${LOCAL_IP}"
   fi
   ok "Swarm ativo"
   sub "se um serviço cair, o Swarm sobe outro sozinho"
@@ -719,6 +728,10 @@ services:
     deploy:
       placement: { constraints: [node.role == manager] }
       labels:
+        # exposedbydefault=false → o próprio Traefik precisa se habilitar, senão o
+        # provider descarta este serviço e o middleware abaixo NUNCA é registrado
+        # (chat e bot-admin caem em 404, mesmo pela tailnet). Achado do squad 02/09.
+        - traefik.enable=true
         # middleware pronto pra rotas de gestão: só tailnet (100.64/10) e localhost passam
         - traefik.http.middlewares.tailnet-only.ipwhitelist.sourcerange=127.0.0.1/32,100.64.0.0/10
 networks:
@@ -917,7 +930,7 @@ tailscale_gestao(){
       say "     ${AMB}→ abra o link abaixo e autorize este servidor na sua tailnet:${C0}"
       tailscale up
     fi
-    TSIP=$(tailscale ip -4 2>/dev/null | head -1)
+    TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
     [[ -n "$TSIP" ]] || die "Tailscale não subiu — rode 'tailscale up' manualmente e depois o instalador de novo."
   fi
   ok "Servidor na tailnet: ${BOLD}${TSIP}${C0}"
@@ -1113,7 +1126,7 @@ EOF
   info "configurando o painel e registrando esta VPS…"
   local i=0
   until curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" >/dev/null 2>&1; do
-    i=$((i+1)); [[ $i -gt 30 ]] && die "Beszel Hub não respondeu em 90 segundos — veja: docker service ps beszel_hub"
+    i=$((i+1)); [[ $i -gt 30 ]] && { warn "Beszel Hub demorou a responder — a fundação segue; conserte depois com --repair-beszel"; return 0; }
     sleep 3
   done
 
@@ -1126,7 +1139,7 @@ EOF
     if docker service inspect beszel_agent >/dev/null 2>&1; then
       docker service rm beszel_agent >/dev/null
       until ! docker service inspect beszel_agent >/dev/null 2>&1; do
-        wait=$((wait+1)); [[ $wait -gt 20 ]] && die "O Agent antigo não parou. Veja: docker service ps beszel_agent"
+        wait=$((wait+1)); [[ $wait -gt 20 ]] && { warn "Beszel Agent antigo não parou — a fundação segue; conserte depois com --repair-beszel"; return 0; }
         sleep 1
       done
     fi
@@ -1150,7 +1163,7 @@ EOF
         sleep 2; auth=$(_bz_auth)
       fi
     fi
-    [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais em /etc/motobase/beszel-admin.env. Rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"
+    [[ -n "$auth" ]] || { warn "Beszel não aceitou o login automático — a fundação segue; conserte depois com --repair-beszel"; return 0; }
     key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
       "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
     requested_token=$(openssl rand -hex 32)
@@ -1160,7 +1173,7 @@ EOF
     token_active=$(jq -r '.active // false' <<<"$token_response")
     token_permanent=$(jq -r '.permanent // false' <<<"$token_response")
     [[ -n "$key" && "$token" == "$requested_token" && "$token_active" == true && "$token_permanent" == true ]] \
-      || die "Beszel não confirmou o token persistente do Agent. Rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"
+      || { warn "Beszel não confirmou o token do Agent — a fundação segue; conserte depois com --repair-beszel"; return 0; }
     docker secret inspect beszel_agent_key >/dev/null 2>&1 \
       || printf '%s' "$key" | docker secret create beszel_agent_key -
     docker secret inspect beszel_agent_token >/dev/null 2>&1 \
@@ -1632,7 +1645,7 @@ volumes:
 EOF
   chmod 600 "${D}/opt/${SLUG}/moltbot.yml"   # contém token/chave — root-only
   RUN_ROTULO="subindo o moltbot"
-  run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot"
+  run "docker stack deploy --detach=true -c /opt/${SLUG}/moltbot.yml moltbot" || { warn "moltbot falhou — a fundação segue"; return 0; }
   ok "Moltbot no ar: ${BOLD}http://${TSIP:-<ip-tailnet>}:18789${C0}"
   sub "gateway token oculto e salvo no arquivo de credenciais"
   sub "1º acesso: o browser vira device 'Pending' — aprove com:"
@@ -1697,7 +1710,7 @@ prova_real(){
   say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
   local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer beszel_hub beszel_agent"
   [[ -n "${BASE_DOMAIN:-}" ]] && esperados="$esperados home_home"
-  [[ "${CLTOK:-}" == sk-ant-api* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados chat_chat"
+  [[ "${CLTOK:-}" == sk-ant-api* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && esperados="$esperados chat_chat"
   [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados wabot_wabot"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
