@@ -1413,9 +1413,11 @@ services:
       placement: { constraints: [node.role == manager] }
       labels:
         - traefik.enable=true
+        # cert por DNS-01 (ledns): nao depende do IP propagar (HTTP-01 falhava
+        # enquanto resolvedores do LE viam o IP antigo). Precisa do token CF, que ja temos.
         - "traefik.http.routers.home.rule=Host(\`${BASE_DOMAIN}\`) || Host(\`www.${BASE_DOMAIN}\`)"
         - traefik.http.routers.home.entrypoints=websecure
-        - traefik.http.routers.home.tls.certresolver=le
+        - traefik.http.routers.home.tls.certresolver=ledns
         - traefik.http.services.home.loadbalancer.server.port=80
 networks:
   web:
@@ -1578,7 +1580,7 @@ services:
         # webhook PÚBLICO (só o path /webhook) — a Ryze precisa POSTar aqui
         - "traefik.http.routers.wabot-hook.rule=Host(\`bot.${BASE_DOMAIN}\`) && PathPrefix(\`/webhook\`)"
         - traefik.http.routers.wabot-hook.entrypoints=websecure
-        - traefik.http.routers.wabot-hook.tls.certresolver=le
+        - traefik.http.routers.wabot-hook.tls.certresolver=ledns
         - traefik.http.routers.wabot-hook.service=wabot
         # pareamento/admin — SÓ pela tailnet
         - "traefik.http.routers.wabot-admin.rule=Host(\`bot-admin.${BASE_DOMAIN}\`)"
