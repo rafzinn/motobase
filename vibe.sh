@@ -622,10 +622,11 @@ questionario(){
   done
 
   say ""
-  say "     ${BOLD}Claude${C0} ${DIM}— opcional · o programador desta VPS${C0}"
-  sub "jeito fácil: rode 'claude setup-token' no SEU computador e cole aqui"
+  say "     ${BOLD}Claude${C0} ${DIM}— opcional · programador da VPS + chat no navegador${C0}"
+  sub "pro Claude Code (programar a VPS): 'claude setup-token' gera um sk-ant-oat…"
+  sub "${BOLD}pro CHAT no navegador funcionar, precisa de uma API key sk-ant-api…${C0} (a oat NÃO serve)"
   link "https://console.anthropic.com/settings/keys"
-  ask_tok CLTOK "Token do Claude" '^sk-ant-' "sk-ant-oat01-… ou sk-ant-api03-…"
+  ask_tok CLTOK "Token do Claude (API key sk-ant-api pra ligar o chat)" '^sk-ant-' "sk-ant-api03-… (chat) ou sk-ant-oat01-… (só Claude Code)"
 
   say ""
   say "     ${BOLD}OpenAI${C0} ${DIM}— opcional · para aplicações que usam a API${C0}"
@@ -1240,7 +1241,7 @@ EOF
   fi
 
   if ! docker secret inspect beszel_agent_key >/dev/null 2>&1 \
-    || ! docker secret inspect beszel_agent_token; then
+    || ! docker secret inspect beszel_agent_token >/dev/null 2>&1; then
     _bz_auth(){ curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" '{identity:$identity,password:$password}')" \
       "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty'; }
@@ -1416,7 +1417,11 @@ instalar_claude_chat(){
   ETAPA="chat Claude"
   # a Messages API exige API key; o setup-token do Claude Code (sk-ant-oat) não serve
   if [[ "${CLTOK:-}" != sk-ant-api* ]]; then
-    [[ -n "${CLTOK:-}" ]] && info "chat Claude pulado — precisa de uma API key (sk-ant-api…), e você deu um setup-token"
+    if [[ -n "${CLTOK:-}" ]]; then
+      warn "chat NÃO instalado — você deu um setup-token (sk-ant-oat), e o chat precisa de uma API key (sk-ant-api…)"
+      sub "pegue uma em console.anthropic.com/settings/keys e rode o instalador de novo pra ligar o chat"
+      CHAT_SKIP="setup-token em vez de API key"
+    fi
     return 0
   fi
   if [[ -z "${BASE_DOMAIN:-}" || -z "${CFTOK:-}" || -z "${TSIP:-}" ]]; then
