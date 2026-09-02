@@ -1136,11 +1136,21 @@ EOF
 
   if ! docker secret inspect beszel_agent_key >/dev/null 2>&1 \
     || ! docker secret inspect beszel_agent_token; then
-    auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
-      --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
-        '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
-    [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais preservadas em /etc/motobase/beszel-admin.env."
+    _bz_auth(){ curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" '{identity:$identity,password:$password}')" \
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty'; }
+    auth=$(_bz_auth)
+    if [[ -z "$auth" ]]; then
+      # volume remendado: o env USER_* é ignorado quando já existe conta. Força a senha
+      # salva no admin (superuser) e no user via CLI oficial do PocketBase — auto-conserto.
+      local bz_cid; bz_cid=$(docker ps -q -f name=beszel_hub | head -1)
+      if [[ -n "$bz_cid" ]]; then
+        info "Beszel com conta antiga — regravando a senha do painel (superuser upsert)…"
+        docker exec "$bz_cid" /beszel superuser upsert "$admin_email" "$admin_password" >/dev/null 2>&1 || true
+        sleep 2; auth=$(_bz_auth)
+      fi
+    fi
+    [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais em /etc/motobase/beszel-admin.env. Rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"
     key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
       "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
     requested_token=$(openssl rand -hex 32)
