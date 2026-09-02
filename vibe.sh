@@ -1101,6 +1101,7 @@ pele_stack(){
   $CURL "${RAW_BASE}/skins/tvp/portainer.css" -o "${D}/opt/pele/portainer.css" 2>/dev/null || pele_ok=0
   $CURL "${RAW_BASE}/skins/tvp/beszel.css"    -o "${D}/opt/pele/beszel.css"    2>/dev/null || pele_ok=0
   $CURL "${RAW_BASE}/skins/tvp/azuis.map"     -o "${D}/opt/pele/azuis.map"     2>/dev/null || pele_ok=0
+  $CURL "${RAW_BASE}/skins/tvp/favicon.svg"   -o "${D}/opt/pele/favicon.svg"   2>/dev/null || pele_ok=0
   if [[ $pele_ok -eq 0 ]]; then
     warn "não consegui baixar a pele agora — painéis seguem com o visual padrão"
     sub "pra aplicar depois: rode o mesmo comando de novo"
@@ -1117,7 +1118,10 @@ pele_stack(){
   _title_js(){ # $1 = rótulo do app
     cat <<TJS
 (function(){var A="$1",P="${proj_js}",T=A+" ✦ "+P;
-function f(){if(document.title!==T)document.title=T;}
+function f(){if(document.title!==T)document.title=T;
+var h=document.head||document.documentElement,ok=false;
+h.querySelectorAll("link[rel~='icon']").forEach(function(l){if(l.href&&l.href.indexOf("/tvp-favicon.svg")>=0)ok=true;else l.parentNode.removeChild(l);});
+if(!ok){var n=document.createElement("link");n.rel="icon";n.type="image/svg+xml";n.href="/tvp-favicon.svg";h.appendChild(n);}}
 f();try{new MutationObserver(f).observe(document.head||document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}
 setInterval(f,1500);})();
 TJS
@@ -1134,6 +1138,7 @@ http {
     client_max_body_size 512m;
     location = /tvp-skin.css { default_type text/css; alias /pele/portainer.css; }
     location = /tvp-title.js { default_type application/javascript; alias /pele/title-portainer.js; }
+    location = /tvp-favicon.svg { default_type image/svg+xml; alias /pele/favicon.svg; }
     location / {
       proxy_pass http://127.0.0.1:9010;
       proxy_http_version 1.1;
@@ -1155,6 +1160,7 @@ ${subs}
     listen 8090;
     location = /tvp-skin.css { default_type text/css; alias /pele/beszel.css; }
     location = /tvp-title.js { default_type application/javascript; alias /pele/title-beszel.js; }
+    location = /tvp-favicon.svg { default_type image/svg+xml; alias /pele/favicon.svg; }
     location / {
       proxy_pass http://127.0.0.1:8091;
       proxy_http_version 1.1;
