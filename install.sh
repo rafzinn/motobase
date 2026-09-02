@@ -28,6 +28,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY=1 ;;
     --status) ACTION="status" ;;
     --repair-beszel) ACTION="repair-beszel" ;;
+    --reconcile) ACTION="reconcile" ;;
     --site) ACTION="site" ;;
     --wordpress) ACTION="wordpress" ;;
     --help|-h) ACTION="help" ;;
@@ -162,8 +163,10 @@ docker_service_exists(){
 }
 
 foundation_present(){
-  [[ -f "${STATE_REAL}/base.env" ]] && return 0
-  docker_service_exists traefik_traefik && docker_service_exists portainer_portainer
+  # SÓ base.env conta como "pronto". Meia-instalação (morreu depois do Portainer,
+  # antes do registro) tem traefik+portainer mas NÃO base.env -> re-roda a fundação
+  # e conclui home/chat/bot, em vez de cair no menu sem caminho. Achado do squad.
+  [[ -f "${STATE_REAL}/base.env" ]]
 }
 
 load_state(){
@@ -676,6 +679,7 @@ main_menu(){
     say "  ${DIM}${BASE_NAME} · Swarm · Traefik · Portainer · Dados · Tailnet${C0}\n"
     say "  ${ORANGE}[1]${C0} Novo site simples       ${ORANGE}[2]${C0} Novo WordPress"
     say "  ${ORANGE}[3]${C0} Meus projetos           ${ORANGE}[4]${C0} Saúde da VPS"
+    say "  ${ORANGE}[5]${C0} Reconciliar acessos ${DIM}(corrige links/DNS pro IP atual)${C0}"
     say "  ${ORANGE}[0]${C0} Sair\n"
     ask choice "O que você quer fazer"
     say ""
@@ -684,6 +688,7 @@ main_menu(){
       2) create_wordpress; break ;;
       3) list_projects; break ;;
       4) smoke_foundation; break ;;
+      5) bash "$(motor)" --reconcile; break ;;
       0) return 0 ;;
       *) warn "Escolha uma opção válida."; sleep 1 ;;
     esac
@@ -703,6 +708,7 @@ main(){
   case "$ACTION" in
     status) smoke_foundation ;;
     repair-beszel) bash "$(motor)" --repair-beszel ;;
+    reconcile) bash "$(motor)" --reconcile ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;

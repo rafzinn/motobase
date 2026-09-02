@@ -58,6 +58,51 @@ CHIP='\033[48;5;173m\033[38;5;236m'   # etiqueta: fundo laranja, texto grafite
 say(){ echo -e "$*"; }
 regua(){ local n=${1:-$LARGURA}; printf '─%.0s' $(seq 1 "$n"); }
 
+# confere se um nome DNS resolve pro IP esperado (avisa; propagação leva 1-2 min)
+verificar_dns(){
+  local nome="$1" alvo="$2" got
+  got=$(getent hosts "$nome" 2>/dev/null | awk '{print $1}' | head -1 || true)
+  if [[ "$got" == "$alvo" ]]; then ok "DNS ${nome} resolve certo ${DIM}(${alvo})${C0}"
+  elif [[ -z "$got" ]]; then info "DNS ${nome} ainda não propagou ${DIM}(normal, 1-2 min)${C0}"
+  else warn "DNS ${nome} resolve pra ${got}, esperado ${alvo} ${DIM}(propagando? aguarde e confira)${C0}"; fi
+}
+
+# Reconcilia DNS pro IP/TSIP ATUAIS a partir do estado salvo — SEM re-perguntar nada.
+# É o conserto de 'troquei de IP' / 'registro velho' sem o aluno tocar no terminal.
+reconciliar(){
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  [[ -r /etc/motobase/base.env ]] || die "Sem /etc/motobase/base.env — a fundação não terminou. Rode o instalador."
+  # shellcheck disable=SC1091
+  source /etc/motobase/base.env
+  BASE_DOMAIN="${BASE_DOMAIN:-}"; SLUG="${BASE_SLUG:-}"; PROJ_NAME="${BASE_NAME:-$SLUG}"
+  CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
+  IP=$(curl -fsS -4 --max-time 8 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+  say ""; say "  ${CHIP} RECONCILIAR ${C0} ${DIM}corrige os endereços pro IP atual desta VPS${C0}"; say ""
+  ok "IP público ${BOLD}${IP}${C0} · tailnet ${BOLD}${TSIP:-—}${C0}"
+  if [[ -z "$CFTOK" ]]; then
+    warn "sem token Cloudflare salvo — não dá pra corrigir o DNS automaticamente"
+    sub "reinstale com o token, ou ajuste os registros A na mão pro IP acima"
+    return 0
+  fi
+  if [[ -z "$BASE_DOMAIN" ]]; then warn "sem domínio base salvo — nada de DNS a reconciliar"; return 0; fi
+  # públicos → IP
+  cf_dns_record "${BASE_DOMAIN}" "$IP" "público · home"
+  cf_dns_record "www.${BASE_DOMAIN}" "$IP" "público · www"
+  docker service inspect wabot_wabot >/dev/null 2>&1 && cf_dns_record "bot.${BASE_DOMAIN}" "$IP" "público · webhook do bot"
+  # privados → TSIP
+  if [[ -n "$TSIP" ]]; then
+    cf_dns_record "portainer.${BASE_DOMAIN}" "$TSIP" "privado · Portainer"
+    cf_dns_record "monitor.${BASE_DOMAIN}" "$TSIP" "privado · Beszel"
+    docker service inspect chat_chat >/dev/null 2>&1 && cf_dns_record "chat.${BASE_DOMAIN}" "$TSIP" "privado · chat"
+    docker service inspect wabot_wabot >/dev/null 2>&1 && cf_dns_record "bot-admin.${BASE_DOMAIN}" "$TSIP" "privado · pareamento do bot"
+  fi
+  say ""; info "conferindo a resolução (pode levar 1-2 min pra propagar)…"
+  verificar_dns "${BASE_DOMAIN}" "$IP"
+  [[ -n "$TSIP" ]] && verificar_dns "portainer.${BASE_DOMAIN}" "$TSIP"
+  say ""; ok "Reconciliação concluída. Se algo ainda não abrir, aguarde 1-2 min (propagação)."
+}
+
 # espera o apt/dpkg liberar (VPS nova roda auto-update no 1º boot)
 esperar_apt_livre(){
   command -v fuser >/dev/null 2>&1 || return 0
@@ -203,12 +248,13 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
   --base) BASE_ONLY="1" ;;
   --repair-beszel) REPAIR_BESZEL="1" ;;
+  --reconcile) RECONCILE="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -1849,6 +1895,9 @@ motobase_helpers(){
 set -euo pipefail
 
 case "${1:-ajuda}" in
+  reconciliar)
+    exec bash <(curl -fsSL https://get.motobot.com.br) --reconcile
+    ;;
   acessos)
     [[ -r /etc/motobase/acessos.txt ]] && { cat /etc/motobase/acessos.txt; echo; echo "─── SENHAS ───"; }
     if [[ -r /etc/motobase/portainer-admin.env ]]; then
@@ -1961,11 +2010,23 @@ registrar_base(){
     printf 'INSTALLED_AT=%q\n' "$(date -Iseconds)"
   } > /etc/motobase/base.env
   chmod 600 /etc/motobase/base.env
+  # token Cloudflare guardado root-only: permite reconciliar o DNS automaticamente
+  # se a VPS trocar de IP, SEM o aluno re-colar nada (é a conta do dono da VPS).
+  if [[ -n "${CFTOK:-}" ]]; then
+    printf '%s' "$CFTOK" > /etc/motobase/cloudflare.token
+    chmod 600 /etc/motobase/cloudflare.token
+  fi
   touch /etc/motobase/projects.tsv
   chmod 600 /etc/motobase/projects.tsv
   motobase_helpers
   ok "Fundação registrada — nas próximas execuções este curl abre o gerenciador"
 }
+
+if [[ -n "$RECONCILE" ]]; then
+  cred(){ :; }
+  reconciliar
+  exit 0
+fi
 
 if [[ -n "$REPAIR_BESZEL" ]]; then
   [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
