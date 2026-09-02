@@ -3,7 +3,7 @@ FROM node:20-alpine AS build
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json ./
-RUN npm install --omit=dev --build-from-source
+RUN npm install --omit=dev --build-from-source --loglevel=error --no-audit --no-fund
 
 # ── runtime: só o necessário ──
 FROM node:20-alpine
