@@ -51,6 +51,7 @@ function lerChave() {
   return (process.env.ANTHROPIC_API_KEY || '').trim();
 }
 const API_KEY = lerChave();
+const WORKSPACE_ID = (process.env.ANTHROPIC_WORKSPACE_ID || '').trim();
 if (!API_KEY) console.warn('[chat] AVISO: sem chave Anthropic — o chat sobe, mas responder vai falhar.');
 
 // ── banco (SQLite em volume) ────────────────────────────────────────────────
@@ -181,7 +182,10 @@ app.post('/api/chat', async (req, res) => {
         'content-type': 'application/json',
         'x-api-key': API_KEY,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'pdfs-2024-09-25'
+        'anthropic-beta': 'pdfs-2024-09-25',
+        // chaves vinculadas a workspace (identity-linked) exigem este cabeçalho;
+        // opcional — só é enviado se o workspace id foi informado
+        ...(WORKSPACE_ID ? { 'anthropic-workspace-id': WORKSPACE_ID } : {})
       },
       body: JSON.stringify(corpo)
     });

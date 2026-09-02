@@ -627,6 +627,10 @@ questionario(){
   sub "${BOLD}pro CHAT no navegador funcionar, precisa de uma API key sk-ant-api…${C0} (a oat NÃO serve)"
   link "https://console.anthropic.com/settings/keys"
   ask_tok CLTOK "Token do Claude (API key sk-ant-api pra ligar o chat)" '^sk-ant-' "sk-ant-api03-… (chat) ou sk-ant-oat01-… (só Claude Code)"
+  if [[ "${CLTOK:-}" == sk-ant-api* ]]; then
+    sub "se a chave for de um WORKSPACE (erro 'anthropic-workspace-id required'), cole o id; senão Enter"
+    ask CLWS "Workspace id da Anthropic (opcional)" ""
+  fi
 
   say ""
   say "     ${BOLD}OpenAI${C0} ${DIM}— opcional · para aplicações que usam a API${C0}"
@@ -1481,6 +1485,7 @@ services:
     environment:
       - MODEL=claude-sonnet-5
       - APP_TITLE=Claude
+      - ANTHROPIC_WORKSPACE_ID=${CLWS:-}
     secrets: [anthropic_api_key]
     volumes: [claude_chat_data:/data]
     networks: [web]
