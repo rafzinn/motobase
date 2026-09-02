@@ -734,7 +734,7 @@ services:
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ${SLUG}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d ${SLUG}"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -774,15 +774,24 @@ banco_pronto(){
   else
     info "aguardando o Postgres subir…"
     local i=0 CID=""
+    # A imagem oficial sobe um Postgres TEMPORÁRIO (só socket unix) pra rodar o init
+    # e o DERRUBA ("terminating connection due to administrator command") antes de
+    # subir o definitivo. pg_isready no socket vê o temporário e o SQL morre no meio
+    # (falha real 02/09). Só o servidor definitivo escuta TCP: readiness = TCP.
     until CID=$(docker ps -q -f name="${SLUG}_postgres" | head -1) && [[ -n "$CID" ]] \
-      && docker exec "$CID" pg_isready -U postgres; do
-      i=$((i+1)); [[ $i -gt 60 ]] && die "Postgres não subiu em 2 minutos — rode o comando de novo; se repetir, veja: docker service ps ${SLUG}_postgres"
+      && docker exec "$CID" pg_isready -h 127.0.0.1 -U postgres -d "${SLUG}" >/dev/null 2>&1; do
+      i=$((i+1)); [[ $i -gt 90 ]] && die "Postgres não subiu em 3 minutos — rode o comando de novo; se repetir, veja: docker service ps ${SLUG}_postgres"
       sleep 2
     done
-    docker exec "$CID" psql -U postgres -d "${SLUG}" -c "create extension if not exists vector;" >/dev/null
+    # e mesmo assim: o SQL de preparação tenta até 5x (rede/timing), nunca morre na 1ª
+    local t=0
+    until docker exec "$CID" psql -h 127.0.0.1 -U postgres -d "${SLUG}" -c "create extension if not exists vector;" >/dev/null 2>&1; do
+      t=$((t+1)); [[ $t -ge 5 ]] && die "Postgres subiu mas não aceitou o SQL de preparação após 5 tentativas — rode o comando de novo"
+      sleep 3
+    done
     if [[ -n "$SEED" && -f "${SEED_DIR}/ddl.sql" ]]; then
       sed "s/{{SLUG}}/${SLUG}/g" "${SEED_DIR}/ddl.sql" > "/opt/${SLUG}/ddl.sql"
-      docker exec -i "$CID" psql -U postgres -d "${SLUG}" -v ON_ERROR_STOP=1 < "/opt/${SLUG}/ddl.sql" >/dev/null
+      docker exec -i "$CID" psql -h 127.0.0.1 -U postgres -d "${SLUG}" -v ON_ERROR_STOP=1 < "/opt/${SLUG}/ddl.sql" >/dev/null
       ok "Schema da semente ${BOLD}${SEED}${C0} aplicado"
       sub "DDL guardado em /opt/${SLUG}/ddl.sql"
       return
