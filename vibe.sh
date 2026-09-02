@@ -499,6 +499,9 @@ questionario(){
   sub "conta nova: entrar já cria sua Tailnet; em Keys clique 'Generate auth key'"
   sub "use chave de uso único, não efêmera; sem ela o instalador abre um link de login"
   link "https://login.tailscale.com/admin/settings/keys"
+  sub "instale o Tailscale no SEU computador pra acessar os painéis privados:"
+  say "       ${DIM}└ Windows:${C0} ${LRJ}https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe${C0}"
+  say "       ${DIM}└ macOS:  ${C0} ${LRJ}https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg${C0}"
   ask_tok TSKEY "Auth key do Tailscale" '^tskey-' "tskey-auth-…"
 
   say ""
