@@ -93,6 +93,13 @@ portainer_login_ok(){
     -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null || true)
   [[ "$r" == *'"jwt"'* ]]
 }
+# login ATRAVÉS da pele (:9000) com Origin, exatamente como o navegador manda
+pele_login_ok(){
+  local r; r=$(curl -s -m 6 -X POST http://127.0.0.1:9000/api/auth -H 'content-type: application/json' \
+    -H 'Origin: http://127.0.0.1:9000' -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null || true)
+  [[ "$r" == *'"jwt"'* ]]
+}
+pele_login_esperar(){ local i; for i in $(seq 1 20); do pele_login_ok "$1" && return 0; sleep 3; done; return 1; }
 portainer_login_esperar(){ local i; for i in $(seq 1 30); do portainer_login_ok "$1" && return 0; sleep 3; done; return 1; }
 
 # nível 1 — etapa
@@ -1283,7 +1290,9 @@ http {
     location / {
       proxy_pass http://127.0.0.1:9010;
       proxy_http_version 1.1;
-      proxy_set_header Host \$host;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Forwarded-Host \$http_host;
+      proxy_set_header X-Forwarded-Proto \$scheme;
       proxy_set_header X-Forwarded-For \$remote_addr;
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection \$connection_upgrade;
@@ -1305,7 +1314,9 @@ ${subs}
     location / {
       proxy_pass http://127.0.0.1:8091;
       proxy_http_version 1.1;
-      proxy_set_header Host \$host;
+      proxy_set_header Host \$http_host;
+      proxy_set_header X-Forwarded-Host \$http_host;
+      proxy_set_header X-Forwarded-Proto \$scheme;
       proxy_set_header X-Forwarded-For \$remote_addr;
       proxy_set_header Upgrade \$http_upgrade;
       proxy_set_header Connection \$connection_upgrade;
@@ -1335,8 +1346,24 @@ networks:
     name: host
 PELEYML
   RUN_ROTULO="subindo a pele dos painéis"
+  local pele_existia=0; docker service inspect pele_pele >/dev/null 2>&1 && pele_existia=1
   run "docker stack deploy --detach=true -c /opt/pele/pele.yml pele"
+  # conf é bind-mount: mudar o arquivo NÃO muda o spec → num re-run, força o reload
+  [[ "$DRY" != "--dry-run" && $pele_existia -eq 1 ]] && docker service update --force --detach=true pele_pele >/dev/null 2>&1 || true
   ok "Painéis vestidos com a identidade da casa"
+  # PROVA pelo CAMINHO DO NAVEGADOR: login do Portainer ATRAVÉS da pele, com Origin
+  # (o Portainer compara Origin×Host — foi o que quebrou o login em 02/09).
+  if [[ "$DRY" != "--dry-run" && -r "${D}/etc/motobase/portainer-admin.env" ]]; then
+    # shellcheck disable=SC1090
+    source "${D}/etc/motobase/portainer-admin.env"
+    info "verificando o login do Portainer pelo caminho do navegador (via pele)…"
+    if pele_login_esperar "${PORTAINER_ADMIN_PASSWORD:-}"; then
+      ok "Portainer via pele: login ${BOLD}verificado${C0} ${DIM}(como o navegador faz)${C0}"
+    else
+      warn "Portainer direto OK, mas via pele o login FALHOU — a pele não deve ser usada até corrigir"
+      sub "enquanto isso entre direto: http://${TSIP}:9010 (Portainer) · http://${TSIP}:8091 (Beszel)"
+    fi
+  fi
   sub "endereços do aluno não mudam: Portainer :9000 · Beszel :8090"
 }
 
@@ -1817,6 +1844,8 @@ prova_real(){
     local nport; nport=$(docker ps --filter name=portainer_portainer -q 2>/dev/null | wc -l)
     if portainer_login_ok "${PORTAINER_ADMIN_PASSWORD:-}" && [[ "$nport" == "1" ]]; then
       ok "Portainer: login admin ${BOLD}OK${C0} ${DIM}(1 container — sem zumbi)${C0}"
+      if pele_login_ok "${PORTAINER_ADMIN_PASSWORD:-}"; then ok "Portainer ${BOLD}pelo navegador${C0} (via pele :9000): login OK"
+      else warn "Portainer via pele (:9000) FALHOU o login — use http://${TSIP}:9010 até corrigir"; fi
     else
       warn "Portainer: login do admin ${BOLD}FALHOU${C0} ${DIM}(containers: ${nport})${C0}"
       sub "rode o mesmo comando de novo — ele refaz o Portainer limpo e verifica"
@@ -1828,7 +1857,11 @@ prova_real(){
     local btok; btok=$(curl -s -m 6 -X POST -H 'content-type: application/json' \
       -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
       "http://127.0.0.1:8091/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
-    if [[ -n "$btok" ]]; then ok "Beszel: login admin ${BOLD}OK${C0}"
+    local btok2; btok2=$(curl -s -m 6 -X POST -H 'content-type: application/json' -H 'Origin: http://127.0.0.1:8090' \
+      -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
+    if [[ -n "$btok" && -n "$btok2" ]]; then ok "Beszel: login admin ${BOLD}OK${C0} ${DIM}(direto e pelo navegador via pele)${C0}"
+    elif [[ -n "$btok" ]]; then warn "Beszel direto OK, mas via pele (:8090) FALHOU — use http://${TSIP}:8091 até corrigir"
     else warn "Beszel: login do admin ${BOLD}FALHOU${C0}"; sub "rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"; fi
   fi
   for s in $esperados; do
