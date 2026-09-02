@@ -348,9 +348,17 @@ preflight(){
   fi
 
   if [[ "$(docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null)" == "active" ]]; then
-    warn "Este servidor JÁ tem Docker Swarm ativo."
-    ask GOON "Continuar mesmo assim? Vou pular o que já existir (s/n)" "n"
-    [[ "$GOON" =~ ^[sS] ]] || die "Abortado com segurança — nada foi alterado."
+    # Swarm do PRÓPRIO Motobase (marca de instalação anterior) = retomada: segue sem
+    # perguntar. Eu mesmo mando "rode o mesmo comando de novo" — não faz sentido
+    # travar o aluno numa pergunta cujo padrão era [n] (Enter abortava). Só pergunta
+    # se for um Swarm estranho, sem marca nossa.
+    if [[ -f /var/log/motobase-instalacao.log || -d /etc/motobase || -f /opt/traefik/stack.yml ]]; then
+      ok "Instalação anterior do Motobase encontrada — ${BOLD}retomando${C0}, pulo o que já existe"
+    else
+      warn "Este servidor JÁ tem Docker Swarm ativo (e não foi o Motobase que criou)."
+      ask GOON "Continuar mesmo assim? Vou pular o que já existir (s/n)" "n"
+      [[ "$GOON" =~ ^[sS] ]] || die "Abortado com segurança — nada foi alterado."
+    fi
   fi
 
   # semente (se pedida): baixa ANTES de perguntar qualquer coisa — falha cedo
