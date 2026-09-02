@@ -193,12 +193,13 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; REPAIR_PELE=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
   --base) BASE_ONLY="1" ;;
   --repair-beszel) REPAIR_BESZEL="1" ;;
+  --repair-pele) REPAIR_PELE="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -2070,6 +2071,26 @@ if [[ -n "$REPAIR_BESZEL" ]]; then
   cred(){ :; }
   beszel_stack
   motobase_helpers
+  exit 0
+fi
+
+if [[ -n "$REPAIR_PELE" ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  if [[ -r /etc/motobase/base.env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/motobase/base.env
+    PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN=""
+    TSIP="${TAILSCALE_IP:-}"
+  else
+    SLUG=$(docker service ls --format '{{.Name}}' 2>/dev/null | sed -n 's/_postgres$//p' | head -1 || true)
+    [[ -n "$SLUG" ]] || die "Não encontrei a base instalada para reparar a pele."
+    PROJ_NAME="$SLUG"; TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+  fi
+  say ""; say "  ${CHIP} REPARO DA PELE ${C0} ${DIM}regenera o visual dos painéis e verifica o login${C0}"; say ""
+  cred(){ :; }
+  pele_stack
+  ok "Pele reparada. Acesse: ${BOLD}http://${TSIP}:9000${C0} (Portainer) · ${BOLD}http://${TSIP}:8090${C0} (Beszel)"
+  sub "login: admin + a senha de 'motobase acessos' (Portainer) · e-mail+senha (Beszel)"
   exit 0
 fi
 
