@@ -29,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --status) ACTION="status" ;;
     --repair-beszel) ACTION="repair-beszel" ;;
     --reconcile) ACTION="reconcile" ;;
+    --repair-chat) ACTION="repair-chat" ;;
     --site) ACTION="site" ;;
     --wordpress) ACTION="wordpress" ;;
     --help|-h) ACTION="help" ;;
@@ -680,6 +681,7 @@ main_menu(){
     say "  ${ORANGE}[1]${C0} Novo site simples       ${ORANGE}[2]${C0} Novo WordPress"
     say "  ${ORANGE}[3]${C0} Meus projetos           ${ORANGE}[4]${C0} Saúde da VPS"
     say "  ${ORANGE}[5]${C0} Reconciliar acessos ${DIM}(corrige links/DNS pro IP atual)${C0}"
+    say "  ${ORANGE}[6]${C0} Adicionar o chat Claude ${DIM}(cola o setup-token do plano Max)${C0}"
     say "  ${ORANGE}[0]${C0} Sair\n"
     ask choice "O que você quer fazer"
     say ""
@@ -689,6 +691,7 @@ main_menu(){
       3) list_projects; break ;;
       4) smoke_foundation; break ;;
       5) bash "$(motor)" --reconcile; break ;;
+      6) bash "$(motor)" --repair-chat; break ;;
       0) return 0 ;;
       *) warn "Escolha uma opção válida."; sleep 1 ;;
     esac
@@ -709,6 +712,7 @@ main(){
     status) smoke_foundation ;;
     repair-beszel) bash "$(motor)" --repair-beszel ;;
     reconcile) bash "$(motor)" --reconcile ;;
+    repair-chat) bash "$(motor)" --repair-chat ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;

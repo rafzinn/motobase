@@ -294,13 +294,14 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; SMOKE_FALHAS=0
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; REPAIR_CHAT=""; SMOKE_FALHAS=0
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
   --base) BASE_ONLY="1" ;;
   --repair-beszel) REPAIR_BESZEL="1" ;;
   --reconcile) RECONCILE="1" ;;
+  --repair-chat) REPAIR_CHAT="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -1992,6 +1993,9 @@ case "${1:-ajuda}" in
   reconciliar)
     exec bash <(curl -fsSL https://get.motobot.com.br) --reconcile
     ;;
+  chat)
+    exec bash <(curl -fsSL https://get.motobot.com.br) --repair-chat
+    ;;
   acessos)
     [[ -r /etc/motobase/acessos.txt ]] && { cat /etc/motobase/acessos.txt; echo; echo "─── SENHAS ───"; }
     if [[ -r /etc/motobase/portainer-admin.env ]]; then
@@ -2119,6 +2123,27 @@ registrar_base(){
 if [[ -n "$RECONCILE" ]]; then
   cred(){ :; }
   reconciliar
+  exit 0
+fi
+
+if [[ -n "$REPAIR_CHAT" ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  [[ -r /etc/motobase/base.env ]] || die "Sem /etc/motobase/base.env — a fundação não terminou. Rode o instalador."
+  # shellcheck disable=SC1091
+  source /etc/motobase/base.env
+  PROJ_NAME="${BASE_NAME:-}"; SLUG="${BASE_SLUG:-}"; BASE_DOMAIN="${BASE_DOMAIN:-}"
+  TSIP="${TAILSCALE_IP:-$(tailscale ip -4 2>/dev/null | head -1 || true)}"
+  IP=$(curl -fsS -4 --max-time 8 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
+  say ""; say "  ${CHIP} ADICIONAR O CHAT ${C0} ${DIM}liga o chat web no seu plano Max${C0}"; say ""
+  sub "no SEU computador rode ${BOLD}claude setup-token${C0} e cole o token FINAL (sk-ant-oat…)"
+  sub "ATENÇÃO: o código de autorização do navegador NÃO é o token — o token sai DEPOIS de colar o código de volta no terminal"
+  ask_tok CLTOK "Setup-token do Claude (sk-ant-oat)" '^sk-ant-oat' "sk-ant-oat01-…"
+  [[ "$CLTOK" == sk-ant-oat* ]] || die "Isso não é um setup-token (tem que começar com sk-ant-oat). Gere com 'claude setup-token'."
+  [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o chat precisa dos três."
+  cred(){ :; }
+  instalar_claude_chat
+  say ""; ok "Pronto. Abra ${BOLD}https://chat.${BASE_DOMAIN}${C0} com o Tailscale ligado."
   exit 0
 fi
 
