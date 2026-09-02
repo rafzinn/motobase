@@ -67,6 +67,52 @@ verificar_dns(){
   else warn "DNS ${nome} resolve pra ${got}, esperado ${alvo} ${DIM}(propagando? aguarde e confira)${C0}"; fi
 }
 
+# Watchdog de telemetria: checa serviços/disco/memória e se home/chat/bot respondem;
+# alerta no Telegram quando algo muda (com diagnóstico via OpenAI, se houver chave).
+# Sobe só se o token do Telegram foi informado. É como o instalador nunca "acha"
+# que está 100% sem estar — o watchdog vigia depois que ele sai.
+instalar_watchdog(){
+  ETAPA="watchdog de telemetria"
+  [[ -z "${TGTOK:-}" ]] && return 0
+  [[ "$DRY" == "--dry-run" ]] && { say "       ${DIM}[dry-run] instalaria o watchdog (timer 5min) + alerta Telegram${C0}"; return 0; }
+  info "instalando o watchdog de telemetria (alerta no Telegram)…"
+  mkdir -p "${D}/etc/motobase" "${D}/usr/local/sbin"
+  {
+    printf 'TG_TOKEN=%s\n' "$TGTOK"
+    printf 'OPENAI_KEY=%s\n' "${OAKEY:-}"
+    printf 'BASE_DOMAIN=%s\n' "${BASE_DOMAIN:-}"
+    printf 'SLUG=%s\n' "$SLUG"
+    printf 'PROJ_NAME=%s\n' "$PROJ_NAME"
+  } > "${D}/etc/motobase/watchdog.env"
+  chmod 600 "${D}/etc/motobase/watchdog.env"
+  if ! $CURL "${RAW_BASE}/watchdog.sh" -o "${D}/usr/local/sbin/motobase-watchdog.sh" 2>/dev/null; then
+    warn "não baixei o watchdog agora — a fundação segue; rode de novo pra tentar"; return 0
+  fi
+  chmod +x "${D}/usr/local/sbin/motobase-watchdog.sh"
+  cat > "${D}/etc/systemd/system/motobase-watchdog.service" <<'UNIT'
+[Unit]
+Description=Motobase watchdog (telemetria + alerta Telegram)
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/motobase-watchdog.sh
+UNIT
+  cat > "${D}/etc/systemd/system/motobase-watchdog.timer" <<'UNIT'
+[Unit]
+Description=Roda o watchdog do Motobase a cada 5 min
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now motobase-watchdog.timer >/dev/null 2>&1 || true
+  ok "Watchdog no ar ${DIM}(checa a cada 5 min · alerta no Telegram)${C0}"
+  sub "envie ${BOLD}/start${C0} pro seu bot do Telegram UMA vez pra ativar os alertas"
+  cred ""; cred "Watchdog: alerta no Telegram (mande /start pro bot uma vez)"
+}
+
 # Reconcilia DNS pro IP/TSIP ATUAIS a partir do estado salvo — SEM re-perguntar nada.
 # É o conserto de 'troquei de IP' / 'registro velho' sem o aluno tocar no terminal.
 reconciliar(){
@@ -248,7 +294,7 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; SMOKE_FALHAS=0
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
@@ -1812,6 +1858,28 @@ prova_real(){
     warn "banco não respondeu ao teste"; sub "investigar: docker service ps ${SLUG}_postgres"
   fi
   command -v claude >/dev/null && ok "Claude Code no PATH" || warn "Claude Code não encontrado no PATH"
+
+  # ── SMOKE PONTA A PONTA: os endereços REALMENTE respondem? ────────────────
+  # Bate em 127.0.0.1 com o Host certo: testa ROTA + MIDDLEWARE + BACKEND de uma
+  # vez, sem depender de DNS propagar nem do Tailscale (source 127.0.0.1 passa no
+  # tailnet-only). É o que impede o instalador de dizer "100%" sem ser verdade.
+  _smoke_hit(){ curl -sk -m 8 -o /dev/null -w '%{http_code}' -H "Host: $1" "https://127.0.0.1${2:-/}" 2>/dev/null || echo 000; }
+  if [[ -n "${BASE_DOMAIN:-}" ]]; then
+    local hc; hc=$(_smoke_hit "$BASE_DOMAIN" "/")
+    [[ "$hc" == 200 ]] && ok "Home responde de verdade ${DIM}(HTTP $hc)${C0}" || { warn "Home NÃO responde ${DIM}(HTTP $hc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+  fi
+  if docker service inspect chat_chat >/dev/null 2>&1; then
+    local cc; cc=$(_smoke_hit "chat.${BASE_DOMAIN}" "/")
+    [[ "$cc" =~ ^(200|304|401)$ ]] && ok "Chat responde de verdade ${DIM}(HTTP $cc · middleware ok)${C0}" || { warn "Chat NÃO responde ${DIM}(HTTP $cc — rota/middleware)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+  fi
+  if docker service inspect wabot_wabot >/dev/null 2>&1; then
+    local pc; pc=$(_smoke_hit "bot-admin.${BASE_DOMAIN}" "/")
+    [[ "$pc" == 200 ]] && ok "Pareamento do bot responde ${DIM}(HTTP $pc)${C0}" || { warn "Pareamento do bot NÃO responde ${DIM}(HTTP $pc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+    local wc; wc=$(_smoke_hit "bot.${BASE_DOMAIN}" "/webhook/wa")
+    [[ "$wc" != 000 && "$wc" != 404 ]] && ok "Webhook do bot roteado ${DIM}(HTTP $wc)${C0}" || { warn "Webhook do bot NÃO roteado ${DIM}(HTTP $wc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+  fi
+  if [[ "$SMOKE_FALHAS" -eq 0 ]]; then ok "${BOLD}Smoke de ponta a ponta: tudo respondeu${C0}"
+  else warn "${BOLD}Smoke: ${SMOKE_FALHAS} verificação(ões) falharam${C0} — o resumo NÃO vai dizer 100%"; fi
 }
 
 # ── resumo ───────────────────────────────────────────────────────────────────
@@ -1850,9 +1918,16 @@ gerar_acessos_txt(){
 resumo(){
   ETAPA="resumo final"
   say ""
-  say "  ${GRN}$(regua $LARGURA)${C0}"
-  say "  ${GRN}${BOLD}  FUNDAÇÃO DO ${PROJ_NAME^^} PRONTA${C0}"
-  say "  ${GRN}$(regua $LARGURA)${C0}"
+  if [[ "${SMOKE_FALHAS:-0}" -eq 0 ]]; then
+    say "  ${GRN}$(regua $LARGURA)${C0}"
+    say "  ${GRN}${BOLD}  ${PROJ_NAME^^} PRONTO — TUDO VERIFICADO, 100% NO AR${C0}"
+    say "  ${GRN}$(regua $LARGURA)${C0}"
+  else
+    say "  ${AMB}$(regua $LARGURA)${C0}"
+    say "  ${AMB}${BOLD}  ${PROJ_NAME^^} INSTALADO — ${SMOKE_FALHAS} PENDÊNCIA(S) A CONFERIR${C0}"
+    say "  ${AMB}$(regua $LARGURA)${C0}"
+    say "     ${DIM}veja os ▲ acima. rode ${BOLD}motobase reconciliar${C0}${DIM} (corrige DNS/IP) e depois recarregue.${C0}"
+  fi
   say ""
   say "     ${DIM}domínio base ·${C0} ${BOLD}${BASE_DOMAIN}${C0}"
   if [[ -n "$APP_DOMAIN" ]]; then
@@ -2072,6 +2147,7 @@ tailscale_gestao
 claude_code
 [[ -z "$BASE_ONLY" ]] && moltbot_stack
 backup_cron
+instalar_watchdog
 prova_real
 registrar_base
 resumo
