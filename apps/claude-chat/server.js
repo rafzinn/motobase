@@ -26,6 +26,29 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
 const SETTINGS = process.env.CHAT_SETTINGS || path.join(__dirname, 'chat-settings.json');
 const MEM_TURNS = parseInt(process.env.MEM_TURNS || '20', 10);   // turnos de contexto enviados
 
+// preços de referência (US$ por 1M tokens — entrada/saída). No plano Max NÃO se
+// paga por token; isto é só pra mostrar quanto a resposta "valeria" na API.
+const PRECOS = {
+  opus:   { in: 5.00,  out: 25.00 },
+  sonnet: { in: 2.00,  out: 10.00 },
+  haiku:  { in: 1.00,  out: 5.00 },
+  fable:  { in: 10.00, out: 50.00 }
+};
+let USD_BRL = parseFloat(process.env.USD_BRL || '') || 5.40;
+async function atualizarCambio() {
+  if (process.env.USD_BRL) return;
+  try {
+    const r = await fetch('https://economia.awesomeapi.com.br/last/USD-BRL', { signal: AbortSignal.timeout(5000) });
+    const j = await r.json(); const v = parseFloat(j?.USDBRL?.bid);
+    if (v > 0) USD_BRL = v;
+  } catch (e) { /* mantém fallback */ }
+}
+function custoBRL(modelo, tin, tout) {
+  const p = PRECOS[modelo] || PRECOS.sonnet;
+  const usd = (tin / 1e6) * p.in + (tout / 1e6) * p.out;
+  return +(usd * USD_BRL).toFixed(4);
+}
+
 // setup-token (sk-ant-oat…) do plano do dono — via secret ou env
 function lerOAuth() {
   for (const f of ['/run/secrets/claude_oauth_token', '/run/secrets/anthropic_oauth_token']) {
@@ -194,7 +217,7 @@ app.post('/api/chat', async (req, res) => {
         .run(convId, 'assistant', textoFinal, '[]', tin, tout, now());
       db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), convId);
     }
-    try { res.write(`event: uso\ndata: ${JSON.stringify({ in: tin, out: tout, plan: 'max', model: modelo })}\n\n`); } catch (e) {}
+    try { res.write(`event: uso\ndata: ${JSON.stringify({ in: tin, out: tout, plan: 'max', model: modelo, brl: custoBRL(modelo, tin, tout) })}\n\n`); } catch (e) {}
     res.end();
   });
 
@@ -203,4 +226,5 @@ app.post('/api/chat', async (req, res) => {
   res.on('close', () => { if (!done) { try { child.kill('SIGTERM'); } catch (e) {} } });
 });
 
+atualizarCambio();
 app.listen(PORT, () => console.log(`[chat] ${APP_TITLE} na porta ${PORT} · modelo ${MODEL} · plano Max · claude ${OAUTH ? 'ok' : 'SEM TOKEN'}`));

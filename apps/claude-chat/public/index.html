@@ -153,8 +153,9 @@ function pill(u){
   const p=document.createElement('div'); p.className='pill';
   let html='<span><b>'+fmtTok(u.in)+'</b> entrada</span><span class="sep">·</span>'
     +'<span><b>'+fmtTok(u.out)+'</b> saída</span>';
-  if(u.plan==='max'){                              // plano Max: sem custo por token
+  if(u.plan==='max'){                              // plano Max: não cobra por token; R$ é só referência
     html+='<span class="sep">·</span><span class="brl">plano Max</span>';
+    if(u.brl!=null) html+='<span class="sep">·</span><span title="quanto valeria na API — no seu plano é grátis">≈ R$ '+Number(u.brl).toFixed(4)+'</span>';
   }else{
     html+='<span class="sep">·</span><span>US$ '+Number(u.usd||0).toFixed(4)+'</span>'
       +'<span class="sep">·</span><span class="brl">R$ '+Number(u.brl||0).toFixed(4)+'</span>';
