@@ -68,6 +68,33 @@ esperar_apt_livre(){
   done
 }
 
+# ── Portainer: robustez aprendida a duras penas (02/09) ────────────────────
+# A porta 9010 é mode:host — SÓ UM container consegue prendê-la. Um zumbi velho
+# (de restart repetido) sequestra a porta e o lock do banco: token 403, admin
+# "inexistente", reset que não abre o banco. Regra: nunca reiniciar o Portainer
+# no fluxo; se precisar refazer, é stack rm + matar SOBRAS + volume limpo.
+portainer_limpar(){
+  docker stack rm portainer >/dev/null 2>&1 || true
+  local w=0   # espera os containers SUMIREM (stack rm remove); teto: nunca trava
+  while [[ -n "$(docker ps -a --filter name=portainer -q 2>/dev/null)" && $w -lt 60 ]]; do sleep 2; w=$((w+2)); done
+  docker ps -a --filter name=portainer -q 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
+  sleep 2
+  docker volume rm portainer_pdata >/dev/null 2>&1 || true
+  docker secret rm portainer_admin_pw >/dev/null 2>&1 || true
+}
+# secret com a senha salva (só cria se faltar; após portainer_limpar sempre falta)
+portainer_secret_garantir(){
+  docker secret inspect portainer_admin_pw >/dev/null 2>&1 \
+    || printf '%s' "$1" | docker secret create portainer_admin_pw - >/dev/null 2>&1 || true
+}
+# PROVA REAL do login: POST /api/auth direto na porta interna. "jwt" na resposta = entrou.
+portainer_login_ok(){
+  local r; r=$(curl -s -m 6 -X POST http://127.0.0.1:9010/api/auth -H 'content-type: application/json' \
+    -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null || true)
+  [[ "$r" == *'"jwt"'* ]]
+}
+portainer_login_esperar(){ local i; for i in $(seq 1 30); do portainer_login_ok "$1" && return 0; sleep 3; done; return 1; }
+
 # nível 1 — etapa
 etapa(){ # $1=n/total  $2=título  $3=subtítulo (opcional)
   local n="$1" t="$2" s="${3:-}" vis fill
@@ -906,20 +933,43 @@ EOF
     sed -i 's|--admin-password-file /run/secrets/portainer_admin_pw|--logo https://get.motobot.com.br/brand/motobase-logo.png --admin-password-file /run/secrets/portainer_admin_pw|' "${D}/opt/${SLUG}/portainer.yml"
     sub "logo própria aplicada no Portainer"
   fi
-  # admin do Portainer já nasce criado (sem a dança do setup-token) — a barreira é a tailnet
-  if [[ "$DRY" != "--dry-run" ]]; then
-    PORTAINER_PW=$(pw)$(pw)
-    if docker secret inspect portainer_admin_pw >/dev/null 2>&1; then
-      PORTAINER_PW="(já definida numa instalação anterior — veja 'motobase acessos')"
+  # ── Portainer: admin já criado, login VERIFICADO, auto-conserto ──────────
+  # O aluno não cola comando: o instalador PROVA que o login funciona antes de seguir.
+  if [[ "$DRY" == "--dry-run" ]]; then
+    RUN_ROTULO="subindo o Portainer"
+    run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
+  else
+    mkdir -p "${D}/etc/motobase" 2>/dev/null || true
+    if [[ -r "${D}/etc/motobase/portainer-admin.env" ]]; then
+      # instalação anterior saudável: mantém a senha salva
+      # shellcheck disable=SC1090
+      source "${D}/etc/motobase/portainer-admin.env"
+      PORTAINER_PW="${PORTAINER_ADMIN_PASSWORD:-}"
     else
-      printf '%s' "$PORTAINER_PW" | docker secret create portainer_admin_pw - >/dev/null 2>&1 || true
-mkdir -p "${D}/etc/motobase" 2>/dev/null || true
-            printf 'PORTAINER_ADMIN_USER=admin\nPORTAINER_ADMIN_PASSWORD=%q\n' "$PORTAINER_PW" > "${D}/etc/motobase/portainer-admin.env" 2>/dev/null || true
-      chmod 600 "${D}/etc/motobase/portainer-admin.env" 2>/dev/null || true
+      # fresco OU quebrado (stack de versão antiga sem credencial salva): zera e recria limpo
+      if docker service inspect portainer_portainer >/dev/null 2>&1; then
+        info "Portainer de uma versão anterior sem credencial salva — refazendo do zero (sem zumbi)…"
+        portainer_limpar
+      fi
+      PORTAINER_PW=$(pw)$(pw)
+      printf 'PORTAINER_ADMIN_USER=admin\nPORTAINER_ADMIN_PASSWORD=%q\n' "$PORTAINER_PW" > "${D}/etc/motobase/portainer-admin.env"
+      chmod 600 "${D}/etc/motobase/portainer-admin.env"
     fi
+    portainer_secret_garantir "$PORTAINER_PW"
+    RUN_ROTULO="subindo o Portainer"
+    run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
+    info "verificando o login do Portainer (prova real)…"
+    if ! portainer_login_esperar "$PORTAINER_PW"; then
+      warn "Portainer subiu mas o login não respondeu — refazendo do zero (zumbi ou volume sujo)…"
+      portainer_limpar
+      portainer_secret_garantir "$PORTAINER_PW"
+      RUN_ROTULO="subindo o Portainer (2ª vez, limpo)"
+      run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
+      portainer_login_esperar "$PORTAINER_PW" \
+        || die "O Portainer não aceitou o login nem após refazer do zero. Veja: docker service logs portainer_portainer"
+    fi
+    ok "Portainer: login do admin ${BOLD}verificado${C0} ${DIM}($(docker ps --filter name=portainer_portainer -q | wc -l) container, volume limpo)${C0}"
   fi
-  RUN_ROTULO="subindo o Portainer"
-  run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
 
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
   # DOCKER-USER, e precisa sobreviver a reboot (script + unit systemd).
@@ -1743,6 +1793,27 @@ prova_real(){
     [[ $tent -gt 18 ]] && break   # ~90s de paciência
     sleep 5
   done
+  # LOGIN DE VERDADE nos painéis — é o que o aluno vai fazer; "serviço de pé" não basta
+  if [[ -r /etc/motobase/portainer-admin.env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/motobase/portainer-admin.env
+    local nport; nport=$(docker ps --filter name=portainer_portainer -q 2>/dev/null | wc -l)
+    if portainer_login_ok "${PORTAINER_ADMIN_PASSWORD:-}" && [[ "$nport" == "1" ]]; then
+      ok "Portainer: login admin ${BOLD}OK${C0} ${DIM}(1 container — sem zumbi)${C0}"
+    else
+      warn "Portainer: login do admin ${BOLD}FALHOU${C0} ${DIM}(containers: ${nport})${C0}"
+      sub "rode o mesmo comando de novo — ele refaz o Portainer limpo e verifica"
+    fi
+  fi
+  if [[ -r /etc/motobase/beszel-admin.env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/motobase/beszel-admin.env
+    local btok; btok=$(curl -s -m 6 -X POST -H 'content-type: application/json' \
+      -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
+      "http://127.0.0.1:8091/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
+    if [[ -n "$btok" ]]; then ok "Beszel: login admin ${BOLD}OK${C0}"
+    else warn "Beszel: login do admin ${BOLD}FALHOU${C0}"; sub "rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"; fi
+  fi
   for s in $esperados; do
     rep=$(docker service ls --format '{{.Name}} {{.Replicas}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')
     have="${rep%%/*}"; want="${rep##*/}"; want="${want%% *}"
@@ -1813,27 +1884,6 @@ motobase_helpers(){
 set -euo pipefail
 
 case "${1:-ajuda}" in
-  portainer-token)
-    docker service inspect portainer_portainer >/dev/null 2>&1 || {
-      echo "Portainer não está instalado nesta VPS." >&2; exit 1;
-    }
-    echo "Gerando um token novo do Portainer…"
-    docker service update --force portainer_portainer >/dev/null
-    for _ in $(seq 1 18); do
-      token=$(docker service logs portainer_portainer --tail 120 2>&1 | grep -oE 'setup_token=[a-f0-9]+' | tail -n 1 | cut -d= -f2 || true)
-      if [[ -n "$token" ]]; then
-        echo
-        echo "Cole ESTE código na tela do Portainer (campo 'Security token'):"
-        echo "  $token"
-        echo
-        echo "(tem alguns minutos de validade; se der erro, rode este comando de novo)"
-        exit 0
-      fi
-      sleep 2
-    done
-    echo "Ainda não apareceu. Rode este mesmo comando novamente em alguns segundos." >&2
-    exit 1
-    ;;
   acessos)
     if [[ -r /etc/motobase/portainer-admin.env ]]; then
       # shellcheck disable=SC1091
@@ -1916,7 +1966,6 @@ UNIT
     cat <<'HELP'
 Motobase — atalhos de acesso
 
-  motobase portainer-token  Gera token para concluir o primeiro acesso ao Portainer
   motobase acessos           Mostra usuário e senha do painel Beszel
   motobase preparar-ssh      Cria o usuário seguro mbadmin a partir da sua chave SSH
   motobase blindar-ssh       Desliga senha/root e libera SSH somente pela Tailnet (após testar mbadmin)
