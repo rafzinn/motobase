@@ -119,19 +119,31 @@ app.delete('/api/conversations/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// monta o prompt: histórico recente + a nova mensagem, num texto só pro claude -p
-function montarPrompt(convId, message, metaAnexos) {
+// monta o CONTEUDO da mensagem (texto + blocos de imagem/pdf em base64, formato
+// nativo da API) pro claude -p via --input-format stream-json. O historico
+// (sem os anexos antigos, que nao ficam salvos) entra como texto; os anexos da
+// mensagem ATUAL entram como blocos de verdade — o Claude enxerga a imagem,
+// nao so o nome do arquivo (dono 2026-09-02, o chat "nao via" anexo nenhum).
+function montarConteudo(convId, message, anexos) {
   const rows = db.prepare('SELECT role,text,attachments FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?')
     .all(convId, MEM_TURNS * 2).reverse();
-  let p = '';
+  let historico = '';
   for (const r of rows) {
     const meta = JSON.parse(r.attachments || '[]');
     const marca = meta.length ? ` [${meta.length} anexo(s): ${meta.map(m => m.name).join(', ')}]` : '';
-    p += (r.role === 'user' ? 'Humano' : 'Assistente') + ': ' + (r.text || '') + marca + '\n\n';
+    historico += (r.role === 'user' ? 'Humano' : 'Assistente') + ': ' + (r.text || '') + marca + '\n\n';
   }
-  const marcaNova = metaAnexos.length ? ` [${metaAnexos.length} anexo(s): ${metaAnexos.map(m => m.name).join(', ')}]` : '';
-  p += 'Humano: ' + (message || '') + marcaNova + '\n\nAssistente:';
-  return p;
+  const texto = historico + 'Humano: ' + (message || (anexos.length ? '(veja o(s) anexo(s))' : '')) + '\n\nAssistente:';
+  const content = [{ type: 'text', text: texto }];
+  for (const a of anexos) {
+    if (!a.data) continue;
+    if (a.kind === 'pdf') {
+      content.push({ type: 'document', source: { type: 'base64', media_type: a.media_type || 'application/pdf', data: a.data } });
+    } else {
+      content.push({ type: 'image', source: { type: 'base64', media_type: a.media_type || 'image/jpeg', data: a.data } });
+    }
+  }
+  return content;
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -144,7 +156,7 @@ app.post('/api/chat', async (req, res) => {
   const anexos = (attachments || []).slice(0, 5);
   const metaAnexos = anexos.map(a => ({ name: a.name, kind: a.kind, media_type: a.media_type }));
 
-  const prompt = montarPrompt(convId, message, metaAnexos);   // histórico ANTES de gravar a nova
+  const conteudo = montarConteudo(convId, message, anexos);   // histórico ANTES de gravar a nova
   db.prepare('INSERT INTO messages (conversation_id,role,text,attachments,created_at) VALUES (?,?,?,?,?)')
     .run(convId, 'user', message || '', JSON.stringify(metaAnexos), now());
 
@@ -159,6 +171,7 @@ app.post('/api/chat', async (req, res) => {
   res.flushHeaders && res.flushHeaders();
 
   const args = ['-p', '--model', (MODEL_ARG[modelo] || 'sonnet'),
+    '--input-format', 'stream-json',
     '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
     '--settings', SETTINGS];
   if (SYSTEM_PROMPT) { args.push('--append-system-prompt', SYSTEM_PROMPT); }
@@ -170,7 +183,10 @@ app.post('/api/chat', async (req, res) => {
     stdio: ['pipe', 'pipe', 'pipe']
   });
   child.on('error', (e) => { errou = 'claude não pôde iniciar: ' + e.message; });
-  try { child.stdin.write(prompt); child.stdin.end(); } catch (e) {}
+  try {
+    child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: conteudo } }) + '\n');
+    child.stdin.end();
+  } catch (e) {}
 
   let buf = '';
   child.stdout.on('data', (chunk) => {
