@@ -69,7 +69,7 @@ esperar_apt_livre(){
 }
 
 # ── Portainer: robustez aprendida a duras penas (02/09) ────────────────────
-# A porta 9010 é mode:host — SÓ UM container consegue prendê-la. Um zumbi velho
+# A porta 9000 é mode:host — SÓ UM container consegue prendê-la. Um zumbi velho
 # (de restart repetido) sequestra a porta e o lock do banco: token 403, admin
 # "inexistente", reset que não abre o banco. Regra: nunca reiniciar o Portainer
 # no fluxo; se precisar refazer, é stack rm + matar SOBRAS + volume limpo.
@@ -87,20 +87,30 @@ portainer_secret_garantir(){
   docker secret inspect portainer_admin_pw >/dev/null 2>&1 \
     || printf '%s' "$1" | docker secret create portainer_admin_pw - >/dev/null 2>&1 || true
 }
-# PROVA REAL do login: POST /api/auth direto na porta interna. "jwt" na resposta = entrou.
+# PROVA REAL do login: POST /api/auth na 9000 (Portainer oficial, direto). "jwt" = entrou.
 portainer_login_ok(){
-  local r; r=$(curl -s -m 6 -X POST http://127.0.0.1:9010/api/auth -H 'content-type: application/json' \
+  local r; r=$(curl -s -m 6 -X POST http://127.0.0.1:9000/api/auth -H 'content-type: application/json' \
     -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null || true)
   [[ "$r" == *'"jwt"'* ]]
 }
-# login ATRAVÉS da pele (:9000) com Origin, exatamente como o navegador manda
-pele_login_ok(){
-  local r; r=$(curl -s -m 6 -X POST http://127.0.0.1:9000/api/auth -H 'content-type: application/json' \
-    -H 'Origin: http://127.0.0.1:9000' -d "{\"username\":\"admin\",\"password\":\"$1\"}" 2>/dev/null || true)
-  [[ "$r" == *'"jwt"'* ]]
-}
-pele_login_esperar(){ local i; for i in $(seq 1 20); do pele_login_ok "$1" && return 0; sleep 3; done; return 1; }
 portainer_login_esperar(){ local i; for i in $(seq 1 30); do portainer_login_ok "$1" && return 0; sleep 3; done; return 1; }
+# Conecta o Portainer ao Docker (environment 'local' via socket) — o Portainer novo
+# NÃO cria sozinho quando o admin vem pronto (--admin-password-file). Idempotente.
+portainer_ensure_env(){
+  local pw="$1" jwt n i
+  jwt=$(curl -s -m 8 -X POST http://127.0.0.1:9000/api/auth -H 'content-type: application/json' \
+    -d "{\"username\":\"admin\",\"password\":\"$pw\"}" 2>/dev/null | grep -o '"jwt":"[^"]*' | cut -d'"' -f4)
+  [[ -z "$jwt" ]] && return 1
+  n=$(curl -s -m 6 http://127.0.0.1:9000/api/endpoints -H "Authorization: Bearer $jwt" 2>/dev/null | grep -o '"Id":' | wc -l)
+  [[ "$n" -ge 1 ]] && return 0
+  curl -s -m 10 -X POST http://127.0.0.1:9000/api/endpoints -H "Authorization: Bearer $jwt" \
+    -F "Name=local" -F "EndpointCreationType=1" >/dev/null 2>&1
+  for i in 1 2 3 4 5; do
+    [[ "$(curl -s -m6 http://127.0.0.1:9000/api/endpoints -H "Authorization: Bearer $jwt" 2>/dev/null | grep -o '"Id":' | wc -l)" -ge 1 ]] && return 0
+    sleep 2
+  done
+  return 1
+}
 
 # nível 1 — etapa
 etapa(){ # $1=n/total  $2=título  $3=subtítulo (opcional)
@@ -193,13 +203,12 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; REPAIR_PELE=""
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
   --base) BASE_ONLY="1" ;;
   --repair-beszel) REPAIR_BESZEL="1" ;;
-  --repair-pele) REPAIR_PELE="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -923,41 +932,27 @@ tailscale_gestao(){
     BESZEL_URL="http://${monitor_host}:8090"
   fi
 
-  # Portainer: publicado APENAS na porta 9000 host-mode, travado no firewall pra tailnet
+  # Portainer OFICIAL: socket direto, porta 9000 host-mode, travado no firewall pra tailnet
   mkdir -p "${D}/opt/${SLUG}" "${D}/usr/local/sbin" "${D}/etc/systemd/system"
   cat > "${D}/opt/${SLUG}/portainer.yml" <<'EOF'
 version: "3.8"
 services:
-  agent:
-    image: portainer/agent:latest
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/volumes:/var/lib/docker/volumes
-    networks: [agent]
-    deploy: { mode: global }
   portainer:
     image: portainer/portainer-ce:latest
-    command: -H tcp://tasks.agent:9001 --tlsskipverify --admin-password-file /run/secrets/portainer_admin_pw
-    volumes: [pdata:/data]
+    command: --admin-password-file /run/secrets/portainer_admin_pw
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - pdata:/data
     secrets: [portainer_admin_pw]
-    networks: [agent]
     ports:
-      # porta interna: quem atende o aluno na 9000 é o servico 'pele' (visual TVP)
-      - { target: 9000, published: 9010, mode: host }
+      - { target: 9000, published: 9000, mode: host }
     deploy:
       placement: { constraints: [node.role == manager] }
-networks:
-  agent: { driver: overlay, attachable: true }
 volumes:
   pdata:
 secrets:
   portainer_admin_pw: { external: true }
 EOF
-  # logo própria (campo oficial --logo) se o arquivo já estiver publicado
-  if $CURL --max-time 10 -o /dev/null "https://get.motobot.com.br/brand/motobase-logo.png" 2>/dev/null; then
-    sed -i 's|--admin-password-file /run/secrets/portainer_admin_pw|--logo https://get.motobot.com.br/brand/motobase-logo.png --admin-password-file /run/secrets/portainer_admin_pw|' "${D}/opt/${SLUG}/portainer.yml"
-    sub "logo própria aplicada no Portainer"
-  fi
   # ── Portainer: admin já criado, login VERIFICADO, auto-conserto ──────────
   # O aluno não cola comando: o instalador PROVA que o login funciona antes de seguir.
   if [[ "$DRY" == "--dry-run" ]]; then
@@ -993,7 +988,10 @@ EOF
       portainer_login_esperar "$PORTAINER_PW" \
         || die "O Portainer não aceitou o login nem após refazer do zero. Veja: docker service logs portainer_portainer"
     fi
-    ok "Portainer: login do admin ${BOLD}verificado${C0} ${DIM}($(docker ps --filter name=portainer_portainer -q | wc -l) container, volume limpo)${C0}"
+    ok "Portainer: login do admin ${BOLD}verificado${C0} ${DIM}($(docker ps --filter name=portainer_portainer -q | wc -l) container)${C0}"
+    info "conectando o Portainer ao Docker…"
+    if portainer_ensure_env "$PORTAINER_PW"; then ok "Portainer: environment ${BOLD}local${C0} conectado ${DIM}(enxerga os containers)${C0}"
+    else warn "environment não conectou — em Environments → Add → Docker (Socket) você conecta em 2 cliques"; fi
   fi
 
   # Porta publicada pelo Docker IGNORA o ufw — o trinco de verdade é na chain
@@ -1002,7 +1000,7 @@ EOF
 #!/usr/bin/env bash
 # Trava portas de GESTÃO pra aceitarem só tailnet (100.64/10) e localhost.
 set -e
-PORTS="9000 8090 9010 8091 18789"   # 9000/8090=pele (Portainer/Beszel) · 9010/8091=diretas · 18789=moltbot
+PORTS="9000 8090 18789"   # Portainer · Beszel · moltbot — só pela tailnet
 iptables -N GESTAO-TAILNET 2>/dev/null || true
 iptables -F GESTAO-TAILNET
 for p in $PORTS; do
@@ -1042,7 +1040,6 @@ EOF
   cred "IP tailnet do servidor: ${TSIP}"
 
   beszel_stack
-  pele_stack
   home_stack
   instalar_claude_chat
   instalar_wa_bot
@@ -1102,8 +1099,7 @@ services:
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
-      # porta interna: quem atende o aluno na 8090 é o servico 'pele' (visual TVP)
-      - { target: 8090, published: 8091, mode: host }
+      - { target: 8090, published: 8090, mode: host }
     deploy:
       placement: { constraints: [node.role == manager] }
 volumes:
@@ -1116,7 +1112,7 @@ EOF
 
   info "configurando o painel e registrando esta VPS…"
   local i=0
-  until curl -fsS --max-time 3 "http://127.0.0.1:8091/api/health" >/dev/null 2>&1; do
+  until curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" >/dev/null 2>&1; do
     i=$((i+1)); [[ $i -gt 30 ]] && die "Beszel Hub não respondeu em 90 segundos — veja: docker service ps beszel_hub"
     sleep 3
   done
@@ -1143,13 +1139,13 @@ EOF
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
         '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8091/api/collections/users/auth-with-password" | jq -r '.token // empty')
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
     [[ -n "$auth" ]] || die "Beszel não aceitou o login automático. Credenciais preservadas em /etc/motobase/beszel-admin.env."
     key=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
-      "http://127.0.0.1:8091/api/beszel/getkey" | jq -r '.key // empty')
+      "http://127.0.0.1:8090/api/beszel/getkey" | jq -r '.key // empty')
     requested_token=$(openssl rand -hex 32)
     token_response=$(curl -fsS --max-time 10 -H "Authorization: ${auth}" \
-      "http://127.0.0.1:8091/api/beszel/universal-token?enable=1&permanent=1&token=${requested_token}")
+      "http://127.0.0.1:8090/api/beszel/universal-token?enable=1&permanent=1&token=${requested_token}")
     token=$(jq -r '.token // empty' <<<"$token_response")
     token_active=$(jq -r '.active // false' <<<"$token_response")
     token_permanent=$(jq -r '.permanent // false' <<<"$token_response")
@@ -1167,11 +1163,11 @@ EOF
     auth=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" \
         '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8091/api/collections/users/auth-with-password" | jq -r '.token // empty')
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" | jq -r '.token // empty')
   fi
   i=0
   until curl -fsS --max-time 5 -H "Authorization: ${auth}" \
-    "http://127.0.0.1:8091/api/collections/systems/records?perPage=100" \
+    "http://127.0.0.1:8090/api/collections/systems/records?perPage=100" \
     | jq -e --arg name "$SLUG" 'any(.items[]; .name == $name)'; do
     i=$((i+1)); [[ $i -gt 20 ]] && { warn "Beszel Agent ainda não apareceu no painel — a fundação continuará normalmente"; sub "investigar: docker service logs beszel_agent --tail 80"; return 0; }
     sleep 3
@@ -1199,8 +1195,7 @@ services:
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
-      # porta interna: quem atende o aluno na 8090 é o servico 'pele' (visual TVP)
-      - { target: 8090, published: 8091, mode: host }
+      - { target: 8090, published: 8090, mode: host }
     healthcheck:
       test: ["CMD", "/beszel", "health", "--url", "http://localhost:8090"]
       interval: 120s
@@ -1211,7 +1206,7 @@ services:
   agent:
     image: henrygd/beszel-agent:${version}
     environment:
-      HUB_URL: http://127.0.0.1:8091
+      HUB_URL: http://127.0.0.1:8090
       KEY_FILE: /run/secrets/beszel_agent_key
       TOKEN_FILE: /run/secrets/beszel_agent_token
       SYSTEM_NAME: ${SLUG}
@@ -1236,136 +1231,6 @@ volumes:
   agent_data: {}
 EOF
   chmod 600 "$target"
-}
-
-# ── pele: Portainer e Beszel vestidos com a identidade da casa ───────────────
-# Um nginx em rede host assume as portas 9000/8090 e injeta o CSS da pele,
-# reescrevendo as cores no caminho. Se qualquer coisa falhar, os painéis
-# continuam funcionando com o visual padrão — a pele nunca derruba a gestão.
-pele_stack(){
-  ETAPA="pele dos painéis"
-  info "vestindo Portainer e Beszel com a identidade da casa…"
-  mkdir -p "${D}/opt/pele"
-  local pele_ok=1
-  $CURL "${RAW_BASE}/skins/tvp/portainer.css" -o "${D}/opt/pele/portainer.css" 2>/dev/null || pele_ok=0
-  $CURL "${RAW_BASE}/skins/tvp/beszel.css"    -o "${D}/opt/pele/beszel.css"    2>/dev/null || pele_ok=0
-  $CURL "${RAW_BASE}/skins/tvp/azuis.map"     -o "${D}/opt/pele/azuis.map"     2>/dev/null || pele_ok=0
-  $CURL "${RAW_BASE}/skins/tvp/favicon.svg"   -o "${D}/opt/pele/favicon.svg"   2>/dev/null || pele_ok=0
-  if [[ $pele_ok -eq 0 ]]; then
-    warn "não consegui baixar a pele agora — painéis seguem com o visual padrão"
-    sub "pra aplicar depois: rode o mesmo comando de novo"
-    return 0
-  fi
-  local subs="" de para
-  while read -r de para; do
-    [[ -n "$de" && -n "$para" ]] && subs+="      sub_filter '${de}' '${para}';"$'\n'
-  done < "${D}/opt/pele/azuis.map"
-  # título da aba do navegador: "App ✦ Projeto". As SPAs reescrevem document.title
-  # via JS, então um MutationObserver devolve o formato toda vez. Servido como
-  # arquivo do próprio domínio (o CSP script-src 'self' do Portainer aceita).
-  local proj_js; proj_js=$(printf '%s' "${PROJ_NAME}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  _title_js(){ # $1 = rótulo do app
-    cat <<TJS
-(function(){var A="$1",P="${proj_js}",T=A+" ✦ "+P;
-function f(){if(document.title!==T)document.title=T;
-var h=document.head||document.documentElement,ok=false;
-h.querySelectorAll("link[rel~='icon']").forEach(function(l){if(l.href&&l.href.indexOf("/tvp-favicon.svg")>=0)ok=true;else l.parentNode.removeChild(l);});
-if(!ok){var n=document.createElement("link");n.rel="icon";n.type="image/svg+xml";n.href="/tvp-favicon.svg";h.appendChild(n);}}
-f();try{new MutationObserver(f).observe(document.head||document.documentElement,{childList:true,subtree:true,characterData:true});}catch(e){}
-setInterval(f,1500);})();
-TJS
-  }
-  _title_js "Portainer" > "${D}/opt/pele/title-portainer.js"
-  _title_js "Beszel"    > "${D}/opt/pele/title-beszel.js"
-
-  cat > "${D}/opt/pele/nginx.conf" <<PELECONF
-events {}
-http {
-  map \$http_upgrade \$connection_upgrade { default upgrade; '' close; }
-  server {
-    listen 9000;
-    client_max_body_size 512m;
-    location = /tvp-skin.css { default_type text/css; alias /pele/portainer.css; }
-    location = /tvp-title.js { default_type application/javascript; alias /pele/title-portainer.js; }
-    location = /tvp-favicon.svg { default_type image/svg+xml; alias /pele/favicon.svg; }
-    location / {
-      proxy_pass http://127.0.0.1:9010;
-      proxy_http_version 1.1;
-      proxy_set_header Host \$http_host;
-      proxy_set_header X-Forwarded-Host \$http_host;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-      proxy_set_header X-Forwarded-For \$remote_addr;
-      proxy_set_header Upgrade \$http_upgrade;
-      proxy_set_header Connection \$connection_upgrade;
-      proxy_set_header Accept-Encoding "";
-      proxy_read_timeout 1h;
-      proxy_buffering off;
-      # text/css + JS: o Portainer injeta a paleta via JavaScript em runtime
-      sub_filter_types text/css text/javascript application/javascript;
-      sub_filter_once off;
-      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"><script src="/tvp-title.js"></script></head>';
-${subs}
-    }
-  }
-  server {
-    listen 8090;
-    location = /tvp-skin.css { default_type text/css; alias /pele/beszel.css; }
-    location = /tvp-title.js { default_type application/javascript; alias /pele/title-beszel.js; }
-    location = /tvp-favicon.svg { default_type image/svg+xml; alias /pele/favicon.svg; }
-    location / {
-      proxy_pass http://127.0.0.1:8091;
-      proxy_http_version 1.1;
-      proxy_set_header Host \$http_host;
-      proxy_set_header X-Forwarded-Host \$http_host;
-      proxy_set_header X-Forwarded-Proto \$scheme;
-      proxy_set_header X-Forwarded-For \$remote_addr;
-      proxy_set_header Upgrade \$http_upgrade;
-      proxy_set_header Connection \$connection_upgrade;
-      proxy_set_header Accept-Encoding "";
-      proxy_read_timeout 1h;
-      proxy_buffering off;
-      sub_filter_once on;
-      sub_filter '</head>' '<link rel="stylesheet" href="/tvp-skin.css"><script src="/tvp-title.js"></script></head>';
-    }
-  }
-}
-PELECONF
-  cat > "${D}/opt/pele/pele.yml" <<'PELEYML'
-version: "3.8"
-services:
-  pele:
-    image: nginx:alpine
-    volumes:
-      - /opt/pele/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /opt/pele:/pele:ro
-    networks: [hostnet]
-    deploy:
-      placement: { constraints: [node.role == manager] }
-networks:
-  hostnet:
-    external: true
-    name: host
-PELEYML
-  RUN_ROTULO="subindo a pele dos painéis"
-  local pele_existia=0; docker service inspect pele_pele >/dev/null 2>&1 && pele_existia=1
-  run "docker stack deploy --detach=true -c /opt/pele/pele.yml pele"
-  # conf é bind-mount: mudar o arquivo NÃO muda o spec → num re-run, força o reload
-  [[ "$DRY" != "--dry-run" && $pele_existia -eq 1 ]] && docker service update --force --detach=true pele_pele >/dev/null 2>&1 || true
-  ok "Painéis vestidos com a identidade da casa"
-  # PROVA pelo CAMINHO DO NAVEGADOR: login do Portainer ATRAVÉS da pele, com Origin
-  # (o Portainer compara Origin×Host — foi o que quebrou o login em 02/09).
-  if [[ "$DRY" != "--dry-run" && -r "${D}/etc/motobase/portainer-admin.env" ]]; then
-    # shellcheck disable=SC1090
-    source "${D}/etc/motobase/portainer-admin.env"
-    info "verificando o login do Portainer pelo caminho do navegador (via pele)…"
-    if pele_login_esperar "${PORTAINER_ADMIN_PASSWORD:-}"; then
-      ok "Portainer via pele: login ${BOLD}verificado${C0} ${DIM}(como o navegador faz)${C0}"
-    else
-      warn "Portainer direto OK, mas via pele o login FALHOU — a pele não deve ser usada até corrigir"
-      sub "enquanto isso entre direto: http://${TSIP}:9010 (Portainer) · http://${TSIP}:8091 (Beszel)"
-    fi
-  fi
-  sub "endereços do aluno não mudam: Portainer :9000 · Beszel :8090"
 }
 
 # ── home: página pública de boas-vindas no domínio raiz ──────────────────────
@@ -1820,7 +1685,7 @@ prova_real(){
   [[ "$DRY" == "--dry-run" ]] && return 0
   say ""
   say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
-  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer portainer_agent beszel_hub beszel_agent pele_pele"
+  local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer beszel_hub beszel_agent"
   [[ -n "${BASE_DOMAIN:-}" ]] && esperados="$esperados home_home"
   [[ "${CLTOK:-}" == sk-ant-api* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados chat_chat"
   [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados wabot_wabot"
@@ -1844,9 +1709,7 @@ prova_real(){
     source /etc/motobase/portainer-admin.env
     local nport; nport=$(docker ps --filter name=portainer_portainer -q 2>/dev/null | wc -l)
     if portainer_login_ok "${PORTAINER_ADMIN_PASSWORD:-}" && [[ "$nport" == "1" ]]; then
-      ok "Portainer: login admin ${BOLD}OK${C0} ${DIM}(1 container — sem zumbi)${C0}"
-      if pele_login_ok "${PORTAINER_ADMIN_PASSWORD:-}"; then ok "Portainer ${BOLD}pelo navegador${C0} (via pele :9000): login OK"
-      else warn "Portainer via pele (:9000) FALHOU o login — use http://${TSIP}:9010 até corrigir"; fi
+      ok "Portainer: login admin ${BOLD}OK${C0} ${DIM}(1 container, environment conectado)${C0}"
     else
       warn "Portainer: login do admin ${BOLD}FALHOU${C0} ${DIM}(containers: ${nport})${C0}"
       sub "rode o mesmo comando de novo — ele refaz o Portainer limpo e verifica"
@@ -1857,12 +1720,8 @@ prova_real(){
     source /etc/motobase/beszel-admin.env
     local btok; btok=$(curl -s -m 6 -X POST -H 'content-type: application/json' \
       -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
-      "http://127.0.0.1:8091/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
-    local btok2; btok2=$(curl -s -m 6 -X POST -H 'content-type: application/json' -H 'Origin: http://127.0.0.1:8090' \
-      -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
       "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
-    if [[ -n "$btok" && -n "$btok2" ]]; then ok "Beszel: login admin ${BOLD}OK${C0} ${DIM}(direto e pelo navegador via pele)${C0}"
-    elif [[ -n "$btok" ]]; then warn "Beszel direto OK, mas via pele (:8090) FALHOU — use http://${TSIP}:8091 até corrigir"
+    if [[ -n "$btok" ]]; then ok "Beszel: login admin ${BOLD}OK${C0}"
     else warn "Beszel: login do admin ${BOLD}FALHOU${C0}"; sub "rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"; fi
   fi
   for s in $esperados; do
@@ -1901,7 +1760,6 @@ resumo(){
     say "     ${DIM}aplicação ····${C0} ${DIM}nenhuma criada — use o mesmo curl para criar um site ou WordPress${C0}"
   fi
   say "     ${DIM}gestão ·······${C0} ${BOLD}${PORTAINER_URL:-http://<ip-tailnet>:9000}${C0} ${DIM}(Portainer — só com Tailscale)${C0}"
-  say "     ${DIM}visual ·······${C0} pele TVP nos painéis ${DIM}(nude · quina perfeita · terracota)${C0}"
   say "     ${DIM}saúde ········${C0} ${BOLD}${BESZEL_URL:-http://<ip-tailnet>:8090}${C0} ${DIM}(Beszel — só com Tailscale)${C0}"
   say "     ${DIM}banco ········${C0} ${SLUG}_postgres ${DIM}(db ${SLUG}, pgvector${SEED:+, schema '${SEED}'})${C0}"
   say "     ${DIM}fila/sessão ··${C0} ${SLUG}_redis"
@@ -2071,26 +1929,6 @@ if [[ -n "$REPAIR_BESZEL" ]]; then
   cred(){ :; }
   beszel_stack
   motobase_helpers
-  exit 0
-fi
-
-if [[ -n "$REPAIR_PELE" ]]; then
-  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
-  if [[ -r /etc/motobase/base.env ]]; then
-    # shellcheck disable=SC1091
-    source /etc/motobase/base.env
-    PROJ_NAME="$BASE_NAME"; SLUG="$BASE_SLUG"; APP_DOMAIN=""
-    TSIP="${TAILSCALE_IP:-}"
-  else
-    SLUG=$(docker service ls --format '{{.Name}}' 2>/dev/null | sed -n 's/_postgres$//p' | head -1 || true)
-    [[ -n "$SLUG" ]] || die "Não encontrei a base instalada para reparar a pele."
-    PROJ_NAME="$SLUG"; TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
-  fi
-  say ""; say "  ${CHIP} REPARO DA PELE ${C0} ${DIM}regenera o visual dos painéis e verifica o login${C0}"; say ""
-  cred(){ :; }
-  pele_stack
-  ok "Pele reparada. Acesse: ${BOLD}http://${TSIP}:9000${C0} (Portainer) · ${BOLD}http://${TSIP}:8090${C0} (Beszel)"
-  sub "login: admin + a senha de 'motobase acessos' (Portainer) · e-mail+senha (Beszel)"
   exit 0
 fi
 

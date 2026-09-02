@@ -28,7 +28,6 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY=1 ;;
     --status) ACTION="status" ;;
     --repair-beszel) ACTION="repair-beszel" ;;
-    --repair-pele) ACTION="repair-pele" ;;
     --site) ACTION="site" ;;
     --wordpress) ACTION="wordpress" ;;
     --help|-h) ACTION="help" ;;
@@ -704,7 +703,6 @@ main(){
   case "$ACTION" in
     status) smoke_foundation ;;
     repair-beszel) bash "$(motor)" --repair-beszel ;;
-    repair-pele) bash "$(motor)" --repair-pele ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;
