@@ -273,6 +273,14 @@ preflight(){
     printf '$nrconf{restart} = "a";\n$nrconf{kernelhints} = 0;\n' \
       > /etc/needrestart/conf.d/99-motobase.conf 2>/dev/null || true
   fi
+  # GLOBAL: todo apt-get da máquina (o meu, o do get.docker.com, o do nodesource)
+  # passa a ESPERAR o lock do dpkg até 10min em vez de falhar. Sem isso, os scripts
+  # oficiais de terceiros — que rodam apt-get próprio — quebram quando o
+  # unattended-upgrades da VPS nova está segurando o lock (falha do teste 01/09).
+  if [[ "$DRY" != "--dry-run" ]]; then
+    mkdir -p /etc/apt/apt.conf.d
+    printf 'DPkg::Lock::Timeout "600";\n' > /etc/apt/apt.conf.d/99motobase-lock 2>/dev/null || true
+  fi
 
   # VPS recém-criada costuma estar atualizando sozinha — espera o apt liberar
   if command -v fuser >/dev/null 2>&1; then
