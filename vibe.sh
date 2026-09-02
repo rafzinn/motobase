@@ -911,6 +911,7 @@ EOF
 
   beszel_stack
   pele_stack
+  home_stack
 }
 
 # ── Beszel: painel leve de CPU, RAM, disco, rede e containers ─────────────────
@@ -1211,6 +1212,67 @@ PELEYML
   run "docker stack deploy --detach=true -c /opt/pele/pele.yml pele"
   ok "Painéis vestidos com a identidade da casa"
   sub "endereços do aluno não mudam: Portainer :9000 · Beszel :8090"
+}
+
+# ── home: página pública de boas-vindas no domínio raiz ──────────────────────
+# Fundação nova nasce com uma tela no ar em BASE_DOMAIN (marca Motobase + nome do
+# projeto), com o DNS ligado automaticamente pelo token Cloudflare do wizard.
+# Enquanto o aluno não publica o produto dele, o root não fica vazio/erro.
+home_stack(){
+  ETAPA="página de boas-vindas"
+  [[ -z "${BASE_DOMAIN:-}" ]] && { info "sem domínio base — pulo a home pública"; return 0; }
+  info "publicando a página de boas-vindas em ${BASE_DOMAIN}…"
+
+  # DNS público (DNS-only p/ o Traefik emitir o HTTPS via HTTP-01)
+  if [[ -n "${CFTOK:-}" ]]; then
+    cf_dns_record "$BASE_DOMAIN" "$IP" "público · home de boas-vindas"
+    cf_dns_record "www.${BASE_DOMAIN}" "$IP" "público · alias www da home"
+  else
+    caixa_abre
+    caixa_txt "${BOLD}DNS DA HOME NA MÃO${C0}"
+    caixa_txt "Crie registros ${BOLD}A${C0} de ${BOLD}${BASE_DOMAIN}${C0} e ${BOLD}www.${BASE_DOMAIN}${C0}"
+    caixa_txt "apontando pro IP deste servidor: ${BOLD}${IP}${C0}"
+    caixa_fecha
+  fi
+
+  mkdir -p "${D}/opt/home"
+  local home_ok=1
+  $CURL "${RAW_BASE}/templates/home/index.html" -o "${D}/opt/home/index.html" 2>/dev/null || home_ok=0
+  $CURL "${RAW_BASE}/templates/home/favicon.svg" -o "${D}/opt/home/favicon.svg" 2>/dev/null || home_ok=0
+  if [[ $home_ok -eq 0 ]]; then
+    warn "não consegui baixar a home agora — o root fica sem página"
+    sub "pra publicar depois: rode o mesmo comando de novo"
+    return 0
+  fi
+  # nome do projeto no lugar do placeholder
+  # substitui o nome com escape de \ & / — nome com esses caracteres não quebra o sed
+  local pn_safe; pn_safe=$(printf '%s' "$PROJ_NAME" | sed -e 's/[\\&/]/\\&/g')
+  sed -i "s/{{PROJ_NAME}}/${pn_safe}/g" "${D}/opt/home/index.html"
+
+  cat > "${D}/opt/home/home.yml" <<HOMEYML
+version: "3.8"
+services:
+  home:
+    image: nginx:alpine
+    volumes:
+      - /opt/home:/usr/share/nginx/html:ro
+    networks: [web]
+    deploy:
+      placement: { constraints: [node.role == manager] }
+      labels:
+        - traefik.enable=true
+        - "traefik.http.routers.home.rule=Host(\`${BASE_DOMAIN}\`) || Host(\`www.${BASE_DOMAIN}\`)"
+        - traefik.http.routers.home.entrypoints=websecure
+        - traefik.http.routers.home.tls.certresolver=le
+        - traefik.http.services.home.loadbalancer.server.port=80
+networks:
+  web:
+    external: true
+HOMEYML
+  RUN_ROTULO="subindo a home de boas-vindas"
+  run "docker stack deploy --detach=true -c /opt/home/home.yml home"
+  ok "Home no ar: ${BOLD}https://${BASE_DOMAIN}${C0}"
+  sub "HTTPS emitido em ~1 min; enquanto propaga o DNS, pode dar erro de certificado"
 }
 
 # ── etapa 7: claude code — o programador mora aqui ───────────────────────────
