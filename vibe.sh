@@ -786,6 +786,24 @@ traefik_stack(){
     return
   fi
   mkdir -p "${D}/opt/traefik" && touch "${D}/opt/traefik/acme.json" && chmod 600 "${D}/opt/traefik/acme.json"
+  # Middleware tailnet-only via FILE PROVIDER (não via labels do Traefik — isso dava
+  # "port is missing" e o middleware nunca registrava, deixando chat/bot em 404).
+  # Faixas: localhost + privadas do Docker (o Traefik enxerga o cliente como IP
+  # interno) + CGNAT da tailnet. Genérico: vale em qualquer VPS. A isolação real
+  # vem do DNS apontar chat/bot pro IP da TAILNET (só a tailnet alcança 100.x).
+  mkdir -p "${D}/opt/traefik/dynamic"
+  cat > "${D}/opt/traefik/dynamic/middlewares.yml" <<'DYN'
+http:
+  middlewares:
+    tailnet-only:
+      ipWhiteList:
+        sourceRange:
+          - 127.0.0.1/32
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+          - 100.64.0.0/10
+DYN
   # DNS-01 (Cloudflare) — necessário pra emitir HTTPS de serviços SÓ-tailnet
   # (HTTP-01 não alcança um IP privado). Só entra se o wizard coletou o token CF.
   local TRAEFIK_DNS01_CMD="" TRAEFIK_DNS01_ENV=""
@@ -803,6 +821,8 @@ services:
       - --providers.docker.swarmMode=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=web
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
@@ -817,16 +837,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /opt/traefik/acme.json:/acme.json
+      - /opt/traefik/dynamic:/etc/traefik/dynamic:ro
     networks: [web]
     deploy:
       placement: { constraints: [node.role == manager] }
-      labels:
-        # exposedbydefault=false → o próprio Traefik precisa se habilitar, senão o
-        # provider descarta este serviço e o middleware abaixo NUNCA é registrado
-        # (chat e bot-admin caem em 404, mesmo pela tailnet). Achado do squad 02/09.
-        - traefik.enable=true
-        # middleware pronto pra rotas de gestão: só tailnet (100.64/10) e localhost passam
-        - traefik.http.middlewares.tailnet-only.ipwhitelist.sourcerange=127.0.0.1/32,100.64.0.0/10
 networks:
   web: { external: true }
 EOF
@@ -1477,7 +1491,7 @@ services:
         - "traefik.http.routers.chat.rule=Host(\`chat.${BASE_DOMAIN}\`)"
         - traefik.http.routers.chat.entrypoints=websecure
         - traefik.http.routers.chat.tls.certresolver=ledns
-        - traefik.http.routers.chat.middlewares=tailnet-only
+        - traefik.http.routers.chat.middlewares=tailnet-only@file
         - traefik.http.services.chat.loadbalancer.server.port=3000
 secrets:
   anthropic_api_key: { external: true }
@@ -1567,7 +1581,7 @@ services:
         - "traefik.http.routers.wabot-admin.rule=Host(\`bot-admin.${BASE_DOMAIN}\`)"
         - traefik.http.routers.wabot-admin.entrypoints=websecure
         - traefik.http.routers.wabot-admin.tls.certresolver=ledns
-        - traefik.http.routers.wabot-admin.middlewares=tailnet-only
+        - traefik.http.routers.wabot-admin.middlewares=tailnet-only@file
         - traefik.http.routers.wabot-admin.service=wabot
         - traefik.http.services.wabot.loadbalancer.server.port=3000
 secrets:
