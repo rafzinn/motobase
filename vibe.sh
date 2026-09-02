@@ -587,7 +587,16 @@ docker_swarm(){
     $APT install -qq fail2ban unattended-upgrades >/dev/null 2>&1 || true
     systemctl enable --now fail2ban >/dev/null 2>&1 || true
     dpkg-reconfigure -f noninteractive unattended-upgrades >/dev/null 2>&1 || true
-    ok "Proteção do host: fail2ban + atualizações de segurança automáticas"
+    # MOTD limpa: tira a propaganda do login do Ubuntu (ESM, news, "N updates",
+    # release-upgrade). Deixa o "reboot required" (aviso legítimo) e o header.
+    chmod -x /etc/update-motd.d/10-help-text /etc/update-motd.d/50-motd-news \
+             /etc/update-motd.d/88-esm-announce /etc/update-motd.d/90-updates-available \
+             /etc/update-motd.d/91-release-upgrade /etc/update-motd.d/91-contract-ua-esm-status \
+             /etc/update-motd.d/95-hwe-eol >/dev/null 2>&1 || true
+    systemctl disable --now motd-news.timer >/dev/null 2>&1 || true
+    [[ -f /etc/default/motd-news ]] && sed -i 's/^ENABLED=.*/ENABLED=0/' /etc/default/motd-news >/dev/null 2>&1 || true
+    : > /etc/motd 2>/dev/null || true
+    ok "Proteção do host: fail2ban + atualizações de segurança automáticas · login limpo"
     sub "SSH por senha continua só até você validar o acesso privado e rodar 'motobase preparar-ssh'"
   fi
   if ! command -v docker >/dev/null; then
