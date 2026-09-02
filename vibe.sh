@@ -1184,8 +1184,10 @@ beszel_stack(){
   # senha escolhida no wizard tem prioridade sobre a automática (mas não sobre
   # um admin_file já gravado numa instalação anterior — idempotência).
   [[ -z "$admin_password" ]] && admin_password="${BESZEL_ADMIN_PW:-}"
-  if [[ -z "$admin_password" ]]; then
-    admin_password="$(pw)$(pw)"
+  [[ -z "$admin_password" ]] && admin_password="$(pw)$(pw)"
+  # SEMPRE grava as credenciais (wizard OU automática) — antes só a automática era
+  # salva, e a senha digitada no wizard sumia (motobase acessos ficava sem Beszel).
+  if [[ ! -r "$admin_file" ]]; then
     {
       printf 'BESZEL_ADMIN_EMAIL=%q\n' "$admin_email"
       printf 'BESZEL_ADMIN_PASSWORD=%q\n' "$admin_password"
