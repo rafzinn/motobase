@@ -375,7 +375,7 @@ questionario(){
   sub "espere o domínio aparecer como Active em Websites; depois crie o token abaixo"
   link "https://dash.cloudflare.com/"
   sub "My Profile → API Tokens → Create Token → modelo 'Edit zone DNS'"
-  sub "Zone Resources: Include → Specific zone → selecione o domínio do cliente"
+  sub "Zone Resources: Include → ${BOLD}All zones${C0} — assim a VPS gerencia o DNS de TODOS os seus domínios (não só um)"
   sub "este token é SOMENTE para DNS; o R2 usa outro par de chaves no módulo /guard"
   link "https://dash.cloudflare.com/profile/api-tokens"
   while true; do
