@@ -596,11 +596,18 @@ traefik_stack(){
     return
   fi
   mkdir -p "${D}/opt/traefik" && touch "${D}/opt/traefik/acme.json" && chmod 600 "${D}/opt/traefik/acme.json"
+  # DNS-01 (Cloudflare) — necessário pra emitir HTTPS de serviços SÓ-tailnet
+  # (HTTP-01 não alcança um IP privado). Só entra se o wizard coletou o token CF.
+  local TRAEFIK_DNS01_CMD="" TRAEFIK_DNS01_ENV=""
+  if [[ -n "${CFTOK:-}" ]]; then
+    TRAEFIK_DNS01_CMD=$'\n      - --certificatesresolvers.ledns.acme.email='"${LE_EMAIL}"$'\n      - --certificatesresolvers.ledns.acme.storage=/acme.json\n      - --certificatesresolvers.ledns.acme.dnschallenge.provider=cloudflare\n      - --certificatesresolvers.ledns.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53'
+    TRAEFIK_DNS01_ENV=$'\n    environment:\n      - CF_DNS_API_TOKEN='"${CFTOK}"
+  fi
   cat > "${D}/opt/traefik/stack.yml" <<EOF
 version: "3.8"
 services:
   traefik:
-    image: traefik:v2.11
+    image: traefik:v2.11${TRAEFIK_DNS01_ENV}
     command:
       - --providers.docker=true
       - --providers.docker.swarmMode=true
@@ -612,7 +619,7 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --certificatesresolvers.le.acme.email=${LE_EMAIL}
       - --certificatesresolvers.le.acme.storage=/acme.json
-      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web${TRAEFIK_DNS01_CMD}
     ports:
       # host mode: Traefik enxerga o IP REAL do cliente (sem isso, allowlist de IP não funciona)
       - { target: 80, published: 80, mode: host }

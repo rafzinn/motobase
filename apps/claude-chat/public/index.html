@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Claude</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#14100D; --panel:#1C1712; --panel-2:#231D17; --line:rgba(217,164,107,.14);
+    --ink:#F3ECDF; --ink-2:#C6B7A4; --ink-3:#8A7C6B;
+    --terra:#D9714A; --terra-deep:#B0512E; --gold:#E0B274;
+    --user:#241A14; --bot:#1A1611;
+    --sans:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);display:flex;overflow:hidden}
+  button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  /* ── sidebar ── */
+  .side{width:266px;flex:0 0 266px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .side header{padding:16px 16px 12px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line)}
+  .side header .dot{width:9px;height:9px;background:var(--terra);border-radius:50%}
+  .side header b{font-size:14px;letter-spacing:.01em}
+  .new{margin:12px;padding:11px 14px;background:var(--terra);color:#14100D;font-weight:600;font-size:13.5px;text-align:left;transition:background .15s}
+  .new:hover{background:var(--gold)}
+  .convs{flex:1;overflow-y:auto;padding:4px 8px 16px}
+  .conv{display:flex;align-items:center;gap:8px;padding:9px 10px;font-size:13px;color:var(--ink-2);border-left:2px solid transparent}
+  .conv:hover{background:var(--panel-2);color:var(--ink)}
+  .conv.on{background:var(--panel-2);color:var(--ink);border-left-color:var(--terra)}
+  .conv .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .conv .del{opacity:0;color:var(--ink-3);font-size:16px;line-height:1;padding:0 4px}
+  .conv:hover .del{opacity:1}
+  .conv .del:hover{color:var(--terra)}
+  /* ── main ── */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{padding:14px 22px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3);letter-spacing:.04em}
+  .stream{flex:1;overflow-y:auto;padding:26px 0}
+  .wrap{max-width:760px;margin:0 auto;padding:0 22px;display:flex;flex-direction:column;gap:20px}
+  .empty{margin:auto;text-align:center;color:var(--ink-3);padding:60px 20px}
+  .empty h2{font-size:20px;color:var(--ink-2);font-weight:600;margin-bottom:8px}
+  .msg{display:flex;gap:13px;align-items:flex-start}
+  .msg .av{flex:0 0 28px;width:28px;height:28px;display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:500;border:1px solid var(--line)}
+  .msg.user .av{color:var(--gold)} .msg.bot .av{background:var(--terra);color:#14100D;border-color:var(--terra)}
+  .msg .body{flex:1;min-width:0}
+  .msg .body .who{font-size:11px;color:var(--ink-3);font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}
+  .msg .body .txt{font-size:15px;line-height:1.66;color:var(--ink);white-space:pre-wrap;word-wrap:break-word}
+  .msg .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .msg .files .chip{font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:3px 8px}
+  .cursor::after{content:"▍";color:var(--terra);animation:blink 1s steps(1) infinite}
+  .pill{display:inline-flex;align-items:center;gap:10px;margin-top:9px;padding:4px 10px;background:var(--panel);border:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.02em}
+  .pill b{color:var(--ink-2);font-weight:500}
+  .pill .brl{color:var(--gold)}
+  .pill .sep{opacity:.35}
+  @keyframes blink{50%{opacity:0}}
+  /* ── composer ── */
+  .composer{border-top:1px solid var(--line);padding:14px 22px 18px;background:var(--panel)}
+  .cbox{max-width:760px;margin:0 auto;background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--terra)}
+  .attaches{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 0}
+  .attaches .chip{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:4px 8px}
+  .attaches .chip button{color:var(--ink-3);font-size:14px;line-height:1}.attaches .chip button:hover{color:var(--terra)}
+  .row{display:flex;align-items:flex-end;gap:8px;padding:10px 12px}
+  textarea{flex:1;background:none;border:0;resize:none;color:var(--ink);font-size:15px;line-height:1.5;font-family:inherit;max-height:180px;outline:none}
+  textarea::placeholder{color:var(--ink-3)}
+  .icon{flex:0 0 auto;width:38px;height:38px;display:grid;place-items:center;color:var(--ink-3);border:1px solid var(--line);transition:color .15s,border-color .15s}
+  .icon:hover{color:var(--ink);border-color:var(--terra)}
+  .icon.rec{color:var(--terra);border-color:var(--terra);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.5}}
+  .icon svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .send{background:var(--terra);color:#14100D;border-color:var(--terra)}
+  .send:hover{background:var(--gold);border-color:var(--gold)}
+  .send:disabled{opacity:.4;cursor:default}
+  .hint{max-width:760px;margin:7px auto 0;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-align:center;letter-spacing:.04em}
+  .picker{display:flex;align-items:center;gap:8px}
+  .picker select{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);padding:4px 8px;cursor:pointer;outline:none}
+  .picker select:hover{border-color:var(--terra);color:var(--ink)}
+  :focus-visible{outline:2px solid var(--terra);outline-offset:2px}
+  @media(max-width:680px){.side{display:none}}
+</style>
+</head>
+<body>
+  <aside class="side">
+    <header><span class="dot"></span><b id="appname">Claude</b></header>
+    <button class="new" id="new">＋ Nova conversa</button>
+    <div class="convs" id="convs"></div>
+  </aside>
+  <main class="main">
+    <div class="top" id="top" style="display:flex;align-items:center;justify-content:space-between"><span id="topmodel">modelo carregando…</span><span class="picker"><label for="model" style="color:var(--ink-3)">modelo</label><select id="model"></select></span></div>
+    <div class="stream" id="stream"><div class="empty"><h2>Comece uma conversa</h2><p>Suas conversas ficam salvas aqui, só nesta VPS.</p></div></div>
+    <div class="composer">
+      <div class="cbox">
+        <div class="attaches" id="attaches"></div>
+        <div class="row">
+          <button class="icon" id="attach" title="Anexar imagem ou PDF" aria-label="Anexar">
+            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <button class="icon" id="mic" title="Ditar (pt-BR)" aria-label="Microfone" hidden>
+            <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>
+          </button>
+          <textarea id="input" rows="1" placeholder="Escreva para o Claude…"></textarea>
+          <button class="icon send" id="send" title="Enviar" aria-label="Enviar" disabled>
+            <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+      </div>
+      <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" multiple hidden>
+      <div class="hint">Sem login — o acesso é protegido pela tailnet. Anexos: imagens e PDF, até 5 arquivos de 20 MB.</div>
+    </div>
+  </main>
+<script>
+const $=s=>document.querySelector(s);
+let convAtual=null, anexos=[], gravando=false, enviando=false;
+
+async function api(url,opt){ const r=await fetch(url,opt); if(!r.ok&&r.headers.get('content-type')?.includes('json')) throw await r.json(); return r; }
+let modeloSel=null;
+async function carregarConfig(){ try{const c=await(await fetch('/api/config')).json();
+  $('#appname').textContent=c.title; document.title=c.title;
+  modeloSel=c.model;
+  const sel=$('#model'); sel.innerHTML='';
+  for(const id in (c.models||{})){const o=document.createElement('option');o.value=id;o.textContent=c.models[id];if(id===c.model)o.selected=true;sel.append(o);}
+  const rotulo=(c.models&&c.models[c.model])||c.model;
+  $('#topmodel').textContent='Claude '+rotulo;
+  sel.onchange=()=>{modeloSel=sel.value;$('#topmodel').textContent='Claude '+sel.options[sel.selectedIndex].text;};
+}catch(e){} }
+async function listar(){
+  const cs=await(await fetch('/api/conversations')).json();
+  const el=$('#convs'); el.innerHTML='';
+  for(const c of cs){
+    const d=document.createElement('div'); d.className='conv'+(c.id===convAtual?' on':'');
+    const t=document.createElement('span'); t.className='t'; t.textContent=c.title; t.onclick=()=>abrir(c.id);
+    const x=document.createElement('button'); x.className='del'; x.textContent='×'; x.title='Apagar';
+    x.onclick=async(e)=>{e.stopPropagation(); await fetch('/api/conversations/'+c.id,{method:'DELETE'}); if(convAtual===c.id){convAtual=null; $('#stream').innerHTML='<div class="empty"><h2>Comece uma conversa</h2><p>Suas conversas ficam salvas aqui, só nesta VPS.</p></div>';} listar();};
+    d.append(t,x); el.append(d);
+  }
+}
+function bolha(role,text){
+  const m=document.createElement('div'); m.className='msg '+(role==='user'?'user':'bot');
+  const av=document.createElement('div'); av.className='av'; av.textContent=role==='user'?'você':'C';
+  const b=document.createElement('div'); b.className='body';
+  const who=document.createElement('div'); who.className='who'; who.textContent=role==='user'?'Você':'Claude';
+  const tx=document.createElement('div'); tx.className='txt'; tx.textContent=text||'';
+  b.append(who,tx); m.append(av,b);
+  const s=$('#stream'); if(s.querySelector('.empty')) s.innerHTML='<div class="wrap"></div>';
+  let w=s.querySelector('.wrap'); if(!w){w=document.createElement('div');w.className='wrap';s.append(w);}
+  w.append(m); s.scrollTop=s.scrollHeight; return tx;
+}
+function fmtTok(n){return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'k':String(n);}
+function pill(u){
+  const p=document.createElement('div'); p.className='pill';
+  p.innerHTML='<span><b>'+fmtTok(u.in)+'</b> entrada</span><span class="sep">·</span>'
+    +'<span><b>'+fmtTok(u.out)+'</b> saída</span><span class="sep">·</span>'
+    +'<span>US$ '+Number(u.usd).toFixed(4)+'</span><span class="sep">·</span>'
+    +'<span class="brl">R$ '+Number(u.brl).toFixed(4)+'</span>';
+  return p;
+}
+function chipsAnexos(lista,alvo){ for(const a of lista){ const c=document.createElement('div'); c.className='chip'; c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name; alvo.append(c);} }
+async function abrir(id){
+  convAtual=id; listar();
+  const c=await(await fetch('/api/conversations/'+id)).json();
+  const s=$('#stream'); s.innerHTML='<div class="wrap"></div>';
+  for(const m of c.messages){ const tx=bolha(m.role,m.text); if(m.attachments?.length){const f=document.createElement('div');f.className='files';chipsAnexos(m.attachments,f);tx.parentElement.append(f);} if(m.usage){tx.parentElement.append(pill(m.usage));} }
+  if(!c.messages.length) s.innerHTML='<div class="empty"><h2>'+c.title+'</h2><p>Mande a primeira mensagem.</p></div>';
+}
+async function novaConversa(){ const c=await(await fetch('/api/conversations',{method:'POST'})).json(); convAtual=c.id; await listar(); $('#stream').innerHTML='<div class="empty"><h2>Nova conversa</h2><p>Mande a primeira mensagem.</p></div>'; $('#input').focus(); return c.id; }
+
+// anexos
+$('#attach').onclick=()=>$('#file').click();
+$('#file').onchange=async(e)=>{
+  for(const f of e.target.files){
+    if(anexos.length>=5){alert('Máximo 5 anexos.');break;}
+    if(f.size>20*1024*1024){alert(f.name+' passa de 20 MB.');continue;}
+    const kind=f.type==='application/pdf'?'pdf':'image';
+    const data=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(f);});
+    anexos.push({name:f.name,kind,media_type:f.type,data});
+  }
+  e.target.value=''; renderAnexos();
+};
+function renderAnexos(){
+  const el=$('#attaches'); el.innerHTML='';
+  anexos.forEach((a,i)=>{const c=document.createElement('div');c.className='chip';c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name;const x=document.createElement('button');x.textContent='×';x.onclick=()=>{anexos.splice(i,1);renderAnexos();};c.append(x);el.append(c);});
+  atualizarBotao();
+}
+
+// microfone (Web Speech API) — só aparece onde há suporte
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(SR){
+  $('#mic').hidden=false;
+  const rec=new SR(); rec.lang='pt-BR'; rec.interimResults=true; rec.continuous=false;
+  let base='';
+  rec.onresult=(e)=>{let t='';for(let i=e.resultIndex;i<e.results.length;i++)t+=e.results[i][0].transcript;$('#input').value=(base+' '+t).trim();atualizarBotao();autosize();};
+  rec.onend=()=>{gravando=false;$('#mic').classList.remove('rec');};
+  $('#mic').onclick=()=>{ if(gravando){rec.stop();return;} base=$('#input').value; gravando=true; $('#mic').classList.add('rec'); try{rec.start();}catch(e){gravando=false;$('#mic').classList.remove('rec');} };
+}
+
+// envio + streaming
+const input=$('#input');
+function autosize(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px';}
+function atualizarBotao(){$('#send').disabled=enviando||(!input.value.trim()&&!anexos.length);}
+input.addEventListener('input',()=>{autosize();atualizarBotao();});
+input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}});
+$('#send').onclick=enviar;
+$('#new').onclick=novaConversa;
+
+async function enviar(){
+  const texto=input.value.trim(); if((!texto&&!anexos.length)||enviando) return;
+  if(!convAtual) await novaConversa();
+  enviando=true; atualizarBotao();
+  const meusAnexos=anexos.slice(); const metaChips=meusAnexos.map(a=>({name:a.name,kind:a.kind}));
+  const txUser=bolha('user',texto); if(metaChips.length){const f=document.createElement('div');f.className='files';chipsAnexos(metaChips,f);txUser.parentElement.append(f);}
+  input.value=''; anexos=[]; renderAnexos(); autosize();
+  const txBot=bolha('assistant',''); txBot.classList.add('cursor');
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:convAtual,message:texto,attachments:meusAnexos,model:modeloSel})});
+    if(!r.ok||!r.body){const e=await r.json().catch(()=>({error:'falha'}));txBot.textContent='⚠ '+(e.error||'erro');txBot.classList.remove('cursor');enviando=false;atualizarBotao();return;}
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true}); let idx;
+      while((idx=buf.indexOf('\n\n'))>=0){
+        const bloco=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const ev=(bloco.match(/^event: (.*)$/m)||[])[1]; const dl=(bloco.match(/^data: (.*)$/m)||[])[1];
+        if(!dl)continue; let d={}; try{d=JSON.parse(dl);}catch(e){}
+        if(ev==='delta'){txBot.textContent+=d.t||'';$('#stream').scrollTop=$('#stream').scrollHeight;}
+        else if(ev==='uso'){txBot.parentElement.append(pill(d));$('#stream').scrollTop=$('#stream').scrollHeight;}
+        else if(ev==='erro'){txBot.textContent+='\n⚠ '+(d.detail||d.message||('HTTP '+d.status));}
+      }
+    }
+  }catch(e){txBot.textContent+='\n⚠ conexão interrompida';}
+  txBot.classList.remove('cursor'); enviando=false; atualizarBotao(); listar();
+}
+
+carregarConfig(); listar();
+</script>
+</body>
+</html>
