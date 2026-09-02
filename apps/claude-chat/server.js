@@ -1,58 +1,40 @@
 'use strict';
-// ── Chat Claude do Motobase ─────────────────────────────────────────────────
-// Proxy SSE para a Messages API da Anthropic. A chave NUNCA vai ao frontend:
-// fica só no servidor (Docker secret /run/secrets/anthropic_api_key, ou env).
-// Sem login próprio — a barreira de acesso é a tailnet (feito no Traefik).
+// ── Chat Claude do Motobase — via Claude Code (plano Max, SEM créditos de API) ──
+// O backend roda o `claude -p` por baixo, autenticado com o setup-token do dono
+// (CLAUDE_CODE_OAUTH_TOKEN = a assinatura Max). Nada de chave de API, nada de
+// custo por token. A barreira de acesso é a tailnet (feita no Traefik).
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const express = require('express');
 const Database = require('better-sqlite3');
 
 const PORT = process.env.PORT || 3000;
-// modelos oferecidos no seletor (id da API → rótulo). Fable/Opus/Sonnet/Haiku.
+// seletor de modelo (chave → rótulo) e o mapeamento pro --model do Claude Code
 const MODELOS = {
-  'claude-opus-5':        'Opus',
-  'claude-sonnet-5':      'Sonnet',
-  'claude-haiku-4-5-20251001': 'Haiku',
-  'claude-fable-5':       'Fable'
+  'opus':   'Opus',
+  'sonnet': 'Sonnet',
+  'haiku':  'Haiku',
+  'fable':  'Fable'
 };
-const MODEL = MODELOS[process.env.MODEL] ? process.env.MODEL : 'claude-sonnet-5';
-const MAX_TOKENS = parseInt(process.env.MAX_TOKENS || '4096', 10);
+const MODEL_ARG = { opus: 'opus', sonnet: 'sonnet', haiku: 'haiku', fable: 'claude-fable-5-1' };
+const MODEL = MODELOS[process.env.MODEL] ? process.env.MODEL : 'sonnet';
 const APP_TITLE = process.env.APP_TITLE || 'Claude';
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
 const DATA_DIR = process.env.DATA_DIR || '/data';
+const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+const SETTINGS = process.env.CHAT_SETTINGS || path.join(__dirname, 'chat-settings.json');
+const MEM_TURNS = parseInt(process.env.MEM_TURNS || '20', 10);   // turnos de contexto enviados
 
-// preços oficiais (US$ por 1 milhão de tokens) — entrada / saída
-const PRECOS = {
-  'claude-opus-5':             { in: 5.00,  out: 25.00 },
-  'claude-sonnet-5':           { in: 2.00,  out: 10.00 },
-  'claude-haiku-4-5-20251001': { in: 1.00,  out: 5.00 },
-  'claude-fable-5':            { in: 10.00, out: 50.00 }
-};
-// câmbio US$→R$: env USD_BRL manda; senão tenta pegar 1x no boot; fallback 5.40
-let USD_BRL = parseFloat(process.env.USD_BRL || '') || 5.40;
-async function atualizarCambio() {
-  if (process.env.USD_BRL) return;   // fixado pelo operador
-  try {
-    const r = await fetch('https://economia.awesomeapi.com.br/last/USD-BRL', { signal: AbortSignal.timeout(5000) });
-    const j = await r.json(); const v = parseFloat(j?.USDBRL?.bid);
-    if (v > 0) { USD_BRL = v; console.log('[chat] câmbio USD→BRL =', v); }
-  } catch (e) { console.warn('[chat] câmbio: usando fallback', USD_BRL); }
+// setup-token (sk-ant-oat…) do plano do dono — via secret ou env
+function lerOAuth() {
+  for (const f of ['/run/secrets/claude_oauth_token', '/run/secrets/anthropic_oauth_token']) {
+    try { if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8').trim(); } catch (e) {}
+  }
+  return (process.env.CLAUDE_CODE_OAUTH_TOKEN || '').trim();
 }
-function custo(model, tin, tout) {
-  const p = PRECOS[model] || PRECOS['claude-sonnet-5'];
-  const usd = (tin / 1e6) * p.in + (tout / 1e6) * p.out;
-  return { in: tin, out: tout, usd: +usd.toFixed(6), brl: +(usd * USD_BRL).toFixed(4) };
-}
-
-function lerChave() {
-  const f = '/run/secrets/anthropic_api_key';
-  try { if (fs.existsSync(f)) return fs.readFileSync(f, 'utf8').trim(); } catch (e) {}
-  return (process.env.ANTHROPIC_API_KEY || '').trim();
-}
-const API_KEY = lerChave();
-const WORKSPACE_ID = (process.env.ANTHROPIC_WORKSPACE_ID || '').trim();
-if (!API_KEY) console.warn('[chat] AVISO: sem chave Anthropic — o chat sobe, mas responder vai falhar.');
+const OAUTH = lerOAuth();
+if (!OAUTH) console.warn('[chat] AVISO: sem setup-token do Claude — o chat sobe, mas responder vai falhar. Informe o sk-ant-oat.');
 
 // ── banco (SQLite em volume) ────────────────────────────────────────────────
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -76,7 +58,6 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
 `);
-// migração leve: adiciona colunas de uso se o banco for de uma versão anterior
 for (const col of ['tokens_in INTEGER','tokens_out INTEGER','cost_usd REAL','cost_brl REAL']) {
   try { db.exec(`ALTER TABLE messages ADD COLUMN ${col}`); } catch (e) { /* já existe */ }
 }
@@ -88,26 +69,24 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '120mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/api/config', (req, res) => res.json({ title: APP_TITLE, model: MODEL, models: MODELOS, usd_brl: USD_BRL }));
-app.get('/healthz', (req, res) => res.json({ ok: true, key: !!API_KEY }));
+app.get('/api/config', (req, res) => res.json({ title: APP_TITLE, model: MODEL, models: MODELOS, plan: 'max' }));
+app.get('/healthz', (req, res) => res.json({ ok: true, oauth: !!OAUTH }));
 
 app.get('/api/conversations', (req, res) => {
-  const rows = db.prepare('SELECT id,title,updated_at FROM conversations ORDER BY updated_at DESC').all();
-  res.json(rows);
+  res.json(db.prepare('SELECT id,title,updated_at FROM conversations ORDER BY updated_at DESC').all());
 });
 app.post('/api/conversations', (req, res) => {
   const t = now();
-  const info = db.prepare('INSERT INTO conversations (title,created_at,updated_at) VALUES (?,?,?)')
-    .run('Nova conversa', t, t);
+  const info = db.prepare('INSERT INTO conversations (title,created_at,updated_at) VALUES (?,?,?)').run('Nova conversa', t, t);
   res.json({ id: info.lastInsertRowid, title: 'Nova conversa' });
 });
 app.get('/api/conversations/:id', (req, res) => {
   const id = +req.params.id;
   const conv = db.prepare('SELECT id,title FROM conversations WHERE id=?').get(id);
   if (!conv) return res.status(404).json({ error: 'não encontrada' });
-  const msgs = db.prepare('SELECT role,text,attachments,tokens_in,tokens_out,cost_usd,cost_brl,created_at FROM messages WHERE conversation_id=? ORDER BY id').all(id)
+  const msgs = db.prepare('SELECT role,text,attachments,tokens_in,tokens_out,created_at FROM messages WHERE conversation_id=? ORDER BY id').all(id)
     .map(m => ({ role: m.role, text: m.text, attachments: JSON.parse(m.attachments || '[]'),
-      usage: (m.tokens_out != null ? { in: m.tokens_in, out: m.tokens_out, usd: m.cost_usd, brl: m.cost_brl } : null),
+      usage: (m.tokens_out != null ? { in: m.tokens_in, out: m.tokens_out, plan: 'max' } : null),
       created_at: m.created_at }));
   res.json({ id: conv.id, title: conv.title, messages: msgs });
 });
@@ -117,129 +96,111 @@ app.delete('/api/conversations/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// monta os blocos de conteúdo (texto + anexos) pro formato da API
-function blocosDaMensagem(text, attachments) {
-  const blocos = [];
-  for (const a of (attachments || [])) {
-    if (a.kind === 'image') {
-      blocos.push({ type: 'image', source: { type: 'base64', media_type: a.media_type, data: a.data } });
-    } else if (a.kind === 'pdf') {
-      blocos.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data } });
-    }
-  }
-  if (text && text.trim()) blocos.push({ type: 'text', text });
-  return blocos.length ? blocos : [{ type: 'text', text: '' }];
-}
-
-// histórico da API a partir do banco (só texto + tipos de anexo; sem re-enviar base64 antigo)
-function historicoParaAPI(convId) {
-  const rows = db.prepare('SELECT role,text,attachments FROM messages WHERE conversation_id=? ORDER BY id').all(convId);
-  return rows.map(r => {
+// monta o prompt: histórico recente + a nova mensagem, num texto só pro claude -p
+function montarPrompt(convId, message, metaAnexos) {
+  const rows = db.prepare('SELECT role,text,attachments FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?')
+    .all(convId, MEM_TURNS * 2).reverse();
+  let p = '';
+  for (const r of rows) {
     const meta = JSON.parse(r.attachments || '[]');
-    const marca = meta.length ? `\n\n[${meta.length} anexo(s): ${meta.map(m => m.name).join(', ')}]` : '';
-    return { role: r.role, content: (r.text || '') + marca };
-  });
+    const marca = meta.length ? ` [${meta.length} anexo(s): ${meta.map(m => m.name).join(', ')}]` : '';
+    p += (r.role === 'user' ? 'Humano' : 'Assistente') + ': ' + (r.text || '') + marca + '\n\n';
+  }
+  const marcaNova = metaAnexos.length ? ` [${metaAnexos.length} anexo(s): ${metaAnexos.map(m => m.name).join(', ')}]` : '';
+  p += 'Humano: ' + (message || '') + marcaNova + '\n\nAssistente:';
+  return p;
 }
 
 app.post('/api/chat', async (req, res) => {
   const { conversation_id, message, attachments, model } = req.body || {};
-  const modelo = MODELOS[model] ? model : MODEL;   // nunca confia cegamente no cliente
+  const modelo = MODELOS[model] ? model : MODEL;
   const convId = +conversation_id;
   if (!convId) return res.status(400).json({ error: 'conversation_id faltando' });
-  if (!API_KEY) return res.status(503).json({ error: 'servidor sem chave Anthropic' });
+  if (!OAUTH) return res.status(503).json({ error: 'servidor sem setup-token do Claude' });
 
   const anexos = (attachments || []).slice(0, 5);
   const metaAnexos = anexos.map(a => ({ name: a.name, kind: a.kind, media_type: a.media_type }));
 
-  // histórico ANTES de gravar a nova mensagem
-  const historico = historicoParaAPI(convId);
+  const prompt = montarPrompt(convId, message, metaAnexos);   // histórico ANTES de gravar a nova
   db.prepare('INSERT INTO messages (conversation_id,role,text,attachments,created_at) VALUES (?,?,?,?,?)')
     .run(convId, 'user', message || '', JSON.stringify(metaAnexos), now());
 
-  // título da conversa a partir da 1ª mensagem
   const conv = db.prepare('SELECT title FROM conversations WHERE id=?').get(convId);
   if (conv && conv.title === 'Nova conversa' && (message || '').trim()) {
-    const titulo = message.trim().slice(0, 48);
-    db.prepare('UPDATE conversations SET title=?, updated_at=? WHERE id=?').run(titulo, now(), convId);
+    db.prepare('UPDATE conversations SET title=?, updated_at=? WHERE id=?').run(message.trim().slice(0, 48), now(), convId);
   }
-
-  const mensagens = [...historico, { role: 'user', content: blocosDaMensagem(message, anexos) }];
-  const corpo = { model: modelo, max_tokens: MAX_TOKENS, stream: true, messages: mensagens };
-  if (SYSTEM_PROMPT) corpo.system = SYSTEM_PROMPT;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders && res.flushHeaders();
 
+  const args = ['-p', '--model', (MODEL_ARG[modelo] || 'sonnet'),
+    '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+    '--settings', SETTINGS];
+  if (SYSTEM_PROMPT) { args.push('--append-system-prompt', SYSTEM_PROMPT); }
+
   let textoFinal = '';
-  let tin = 0, tout = 0;   // uso EXATO reportado pela própria API
-  try {
-    const base = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
-    const upstream = await fetch(base + '/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'pdfs-2024-09-25',
-        // chaves vinculadas a workspace (identity-linked) exigem este cabeçalho;
-        // opcional — só é enviado se o workspace id foi informado
-        ...(WORKSPACE_ID ? { 'anthropic-workspace-id': WORKSPACE_ID } : {})
-      },
-      body: JSON.stringify(corpo)
-    });
-    if (!upstream.ok || !upstream.body) {
-      const err = await upstream.text().catch(() => '');
-      res.write(`event: erro\ndata: ${JSON.stringify({ status: upstream.status, detail: err.slice(0, 500) })}\n\n`);
-      return res.end();
-    }
-    // repassa o SSE da Anthropic, extraindo os deltas de texto pro cliente
-    const reader = upstream.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const bloco = buf.slice(0, idx); buf = buf.slice(idx + 2);
-        const linha = bloco.split('\n').find(l => l.startsWith('data:'));
-        if (!linha) continue;
-        const payload = linha.slice(5).trim();
-        if (!payload || payload === '[DONE]') continue;
-        try {
-          const ev = JSON.parse(payload);
-          if (ev.type === 'message_start' && ev.message && ev.message.usage) {
-            const u = ev.message.usage;
-            tin = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-          } else if (ev.type === 'message_delta' && ev.usage) {
-            tout = ev.usage.output_tokens || tout;
-          } else if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
-            textoFinal += ev.delta.text;
-            res.write(`event: delta\ndata: ${JSON.stringify({ t: ev.delta.text })}\n\n`);
-          } else if (ev.type === 'message_stop') {
-            res.write('event: fim\ndata: {}\n\n');
-          } else if (ev.type === 'error') {
-            res.write(`event: erro\ndata: ${JSON.stringify(ev.error || {})}\n\n`);
-          }
-        } catch (e) { /* linha não-JSON: ignora */ }
+  let tin = 0, tout = 0, errou = null, done = false;
+  const child = spawn(CLAUDE_BIN, args, {
+    env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: OAUTH, HOME: process.env.HOME || '/root' },
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  child.on('error', (e) => { errou = 'claude não pôde iniciar: ' + e.message; });
+  try { child.stdin.write(prompt); child.stdin.end(); } catch (e) {}
+
+  let buf = '';
+  child.stdout.on('data', (chunk) => {
+    buf += chunk.toString('utf8');
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const linha = buf.slice(0, idx); buf = buf.slice(idx + 1);
+      if (!linha.trim()) continue;
+      let ev; try { ev = JSON.parse(linha); } catch (e) { continue; }
+      // deltas de texto (--include-partial-messages): stream_event → content_block_delta
+      if (ev.type === 'stream_event' && ev.event) {
+        const inner = ev.event;
+        if (inner.type === 'content_block_delta' && inner.delta && inner.delta.type === 'text_delta') {
+          textoFinal += inner.delta.text;
+          res.write(`event: delta\ndata: ${JSON.stringify({ t: inner.delta.text })}\n\n`);
+        } else if (inner.type === 'message_start' && inner.message && inner.message.usage) {
+          tin = inner.message.usage.input_tokens || tin;
+        } else if (inner.type === 'message_delta' && inner.usage) {
+          tout = inner.usage.output_tokens || tout;
+        }
+      } else if (ev.type === 'result') {
+        if (typeof ev.result === 'string' && !textoFinal) textoFinal = ev.result;   // fallback (sem partials)
+        if (ev.usage) { tin = ev.usage.input_tokens || tin; tout = ev.usage.output_tokens || tout; }
+        if (ev.subtype && ev.subtype !== 'success') errou = 'claude: ' + ev.subtype;
+      } else if (ev.type === 'assistant' && ev.message && !textoFinal) {
+        // fallback: se não vierem partials, pega o texto do bloco completo
+        const t = (ev.message.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+        if (t) { textoFinal = t; res.write(`event: delta\ndata: ${JSON.stringify({ t })}\n\n`); }
       }
     }
-  } catch (e) {
-    res.write(`event: erro\ndata: ${JSON.stringify({ detail: String(e && e.message || e) })}\n\n`);
-  } finally {
-    const uso = custo(modelo, tin, tout);
+  });
+  let stderr = '';
+  child.stderr.on('data', (c) => { stderr += c.toString('utf8'); });
+
+  child.on('close', (code) => {
+    done = true;
+    if (errou || (code !== 0 && !textoFinal)) {
+      res.write(`event: erro\ndata: ${JSON.stringify({ detail: (errou || stderr.slice(0, 300) || ('claude saiu com código ' + code)) })}\n\n`);
+    } else {
+      res.write('event: fim\ndata: {}\n\n');
+    }
     if (textoFinal) {
-      db.prepare('INSERT INTO messages (conversation_id,role,text,attachments,tokens_in,tokens_out,cost_usd,cost_brl,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(convId, 'assistant', textoFinal, '[]', uso.in, uso.out, uso.usd, uso.brl, now());
+      db.prepare('INSERT INTO messages (conversation_id,role,text,attachments,tokens_in,tokens_out,created_at) VALUES (?,?,?,?,?,?,?)')
+        .run(convId, 'assistant', textoFinal, '[]', tin, tout, now());
       db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), convId);
     }
-    try { res.write(`event: uso\ndata: ${JSON.stringify({ ...uso, model: modelo })}\n\n`); } catch (e) {}
+    try { res.write(`event: uso\ndata: ${JSON.stringify({ in: tin, out: tout, plan: 'max', model: modelo })}\n\n`); } catch (e) {}
     res.end();
-  }
+  });
+
+  // se o NAVEGADOR desconectar no meio, encerra o claude (não desperdiça). Só mata
+  // se ainda não terminou — o fim normal da resposta também dispara 'close'.
+  res.on('close', () => { if (!done) { try { child.kill('SIGTERM'); } catch (e) {} } });
 });
 
-atualizarCambio();
-app.listen(PORT, () => console.log(`[chat] ${APP_TITLE} na porta ${PORT} · modelo ${MODEL} · chave ${API_KEY ? 'ok' : 'AUSENTE'}`));
+app.listen(PORT, () => console.log(`[chat] ${APP_TITLE} na porta ${PORT} · modelo ${MODEL} · plano Max · claude ${OAUTH ? 'ok' : 'SEM TOKEN'}`));

@@ -622,15 +622,11 @@ questionario(){
   done
 
   say ""
-  say "     ${BOLD}Claude${C0} ${DIM}— opcional · programador da VPS + chat no navegador${C0}"
-  sub "pro Claude Code (programar a VPS): 'claude setup-token' gera um sk-ant-oat…"
-  sub "${BOLD}pro CHAT no navegador funcionar, precisa de uma API key sk-ant-api…${C0} (a oat NÃO serve)"
+  say "     ${BOLD}Claude${C0} ${DIM}— opcional · programador da VPS + chat no navegador, no SEU plano Max${C0}"
+  sub "no SEU computador rode ${BOLD}claude setup-token${C0} e cole o sk-ant-oat aqui"
+  sub "um token só liga os dois: o Claude Code na VPS E o chat web — tudo na assinatura, sem custo de API"
   link "https://console.anthropic.com/settings/keys"
-  ask_tok CLTOK "Token do Claude (API key sk-ant-api pra ligar o chat)" '^sk-ant-' "sk-ant-api03-… (chat) ou sk-ant-oat01-… (só Claude Code)"
-  if [[ "${CLTOK:-}" == sk-ant-api* ]]; then
-    sub "se a chave for de um WORKSPACE (erro 'anthropic-workspace-id required'), cole o id; senão Enter"
-    ask CLWS "Workspace id da Anthropic (opcional)" ""
-  fi
+  ask_tok CLTOK "Setup-token do Claude (sk-ant-oat — liga o Claude Code E o chat, no seu plano)" '^sk-ant-' "sk-ant-oat01-…"
 
   say ""
   say "     ${BOLD}OpenAI${C0} ${DIM}— opcional · para aplicações que usam a API${C0}"
@@ -1433,12 +1429,12 @@ HOMEYML
 # HTTPS por DNS-01 (chat.DOMÍNIO → IP tailnet). A chave vira Docker secret.
 instalar_claude_chat(){
   ETAPA="chat Claude"
-  # a Messages API exige API key; o setup-token do Claude Code (sk-ant-oat) não serve
-  if [[ "${CLTOK:-}" != sk-ant-api* ]]; then
+  # o chat roda o Claude Code por baixo (plano Max) — precisa do SETUP-TOKEN (sk-ant-oat),
+  # o MESMO que autentica o Claude Code. Sem custo de API, é a assinatura do dono.
+  if [[ "${CLTOK:-}" != sk-ant-oat* ]]; then
     if [[ -n "${CLTOK:-}" ]]; then
-      warn "chat NÃO instalado — você deu um setup-token (sk-ant-oat), e o chat precisa de uma API key (sk-ant-api…)"
-      sub "pegue uma em console.anthropic.com/settings/keys e rode o instalador de novo pra ligar o chat"
-      CHAT_SKIP="setup-token em vez de API key"
+      warn "chat NÃO instalado — o chat usa a assinatura (plano Max), que precisa do setup-token sk-ant-oat…"
+      sub "no SEU computador rode 'claude setup-token' e cole o sk-ant-oat; a API key (sk-ant-api) não serve pro chat"
     fi
     return 0
   fi
@@ -1472,9 +1468,9 @@ instalar_claude_chat(){
   RUN_ROTULO="construindo a imagem do chat"
   run "docker build -t motobase/claude-chat:local /opt/claude-chat" || { warn "build do chat falhou — a fundação segue; rode de novo pra tentar"; return 0; }
 
-  # chave como secret (idempotente: só cria se ainda não existir)
-  if ! docker secret inspect anthropic_api_key >/dev/null 2>&1; then
-    printf '%s' "$CLTOK" | docker secret create anthropic_api_key - >/dev/null       && sub "chave gravada no secret anthropic_api_key"       || warn "não consegui criar o secret da chave"
+  # setup-token (assinatura) como secret — idempotente
+  if ! docker secret inspect claude_oauth_token >/dev/null 2>&1; then
+    printf '%s' "$CLTOK" | docker secret create claude_oauth_token - >/dev/null       && sub "setup-token gravado no secret claude_oauth_token"       || warn "não consegui criar o secret do setup-token"
   fi
 
   cat > "${D}/opt/claude-chat/chat.yml" <<CHATYML
@@ -1483,10 +1479,9 @@ services:
   chat:
     image: motobase/claude-chat:local
     environment:
-      - MODEL=claude-sonnet-5
+      - MODEL=sonnet
       - APP_TITLE=Claude
-      - ANTHROPIC_WORKSPACE_ID=${CLWS:-}
-    secrets: [anthropic_api_key]
+    secrets: [claude_oauth_token]
     volumes: [claude_chat_data:/data]
     networks: [web]
     deploy:
@@ -1499,7 +1494,7 @@ services:
         - traefik.http.routers.chat.middlewares=tailnet-only@file
         - traefik.http.services.chat.loadbalancer.server.port=3000
 secrets:
-  anthropic_api_key: { external: true }
+  claude_oauth_token: { external: true }
 volumes:
   claude_chat_data:
 networks:
@@ -1826,7 +1821,7 @@ prova_real(){
   say "  ${CHIP} PROVA REAL ${C0} ${DIM}$(regua $((LARGURA-16)))${C0}"
   local esperados="traefik_traefik ${SLUG}_postgres ${SLUG}_redis portainer_portainer beszel_hub beszel_agent"
   [[ -n "${BASE_DOMAIN:-}" ]] && esperados="$esperados home_home"
-  [[ "${CLTOK:-}" == sk-ant-api* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && esperados="$esperados chat_chat"
+  [[ "${CLTOK:-}" == sk-ant-oat* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && esperados="$esperados chat_chat"
   [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" ]] && esperados="$esperados wabot_wabot"
   [[ "$QUER_MOLT" =~ ^[sS] ]] && esperados="$esperados moltbot_moltbot"
   local tent=0 pendentes="" s rep have want
@@ -1914,7 +1909,7 @@ gerar_acessos_txt(){
   [[ "$DRY" == "--dry-run" ]] && return 0
   local f="${D}/etc/motobase/acessos.txt"; mkdir -p "${D}/etc/motobase"
   local chat_on="" bot_on=""
-  [[ "${CLTOK:-}" == sk-ant-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && chat_on=1
+  [[ "${CLTOK:-}" == sk-ant-oat* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && chat_on=1
   [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && bot_on=1
   {
     echo "ACESSOS — ${PROJ_NAME}"

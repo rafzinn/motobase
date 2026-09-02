@@ -151,10 +151,15 @@ function bolha(role,text){
 function fmtTok(n){return n>=1000?(n/1000).toFixed(n>=10000?0:1)+'k':String(n);}
 function pill(u){
   const p=document.createElement('div'); p.className='pill';
-  p.innerHTML='<span><b>'+fmtTok(u.in)+'</b> entrada</span><span class="sep">·</span>'
-    +'<span><b>'+fmtTok(u.out)+'</b> saída</span><span class="sep">·</span>'
-    +'<span>US$ '+Number(u.usd).toFixed(4)+'</span><span class="sep">·</span>'
-    +'<span class="brl">R$ '+Number(u.brl).toFixed(4)+'</span>';
+  let html='<span><b>'+fmtTok(u.in)+'</b> entrada</span><span class="sep">·</span>'
+    +'<span><b>'+fmtTok(u.out)+'</b> saída</span>';
+  if(u.plan==='max'){                              // plano Max: sem custo por token
+    html+='<span class="sep">·</span><span class="brl">plano Max</span>';
+  }else{
+    html+='<span class="sep">·</span><span>US$ '+Number(u.usd||0).toFixed(4)+'</span>'
+      +'<span class="sep">·</span><span class="brl">R$ '+Number(u.brl||0).toFixed(4)+'</span>';
+  }
+  p.innerHTML=html;
   return p;
 }
 function chipsAnexos(lista,alvo){ for(const a of lista){ const c=document.createElement('div'); c.className='chip'; c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name; alvo.append(c);} }

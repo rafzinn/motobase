@@ -1,0 +1,6 @@
+{
+  "_comentario": "Chat puro: nega todas as ferramentas — o Claude só conversa, não lê arquivos nem roda comandos na VPS.",
+  "permissions": {
+    "deny": ["Bash","Write","Edit","NotebookEdit","Read","Glob","Grep","WebFetch","WebSearch","Task","TodoWrite"]
+  }
+}
