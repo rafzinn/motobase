@@ -1451,7 +1451,7 @@ instalar_claude_chat(){
   # fonte do repo → build local
   mkdir -p "${D}/opt/claude-chat/public"
   local chat_ok=1
-  for f in package.json server.js Dockerfile .dockerignore; do
+  for f in package.json server.js Dockerfile .dockerignore chat-settings.json; do
     $CURL "${RAW_BASE}/apps/claude-chat/${f}" -o "${D}/opt/claude-chat/${f}" 2>/dev/null || chat_ok=0
   done
   $CURL "${RAW_BASE}/apps/claude-chat/public/index.html" -o "${D}/opt/claude-chat/public/index.html" 2>/dev/null || chat_ok=0
