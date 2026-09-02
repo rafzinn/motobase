@@ -27,9 +27,9 @@
   html,body{height:100%}
   body{
     background:var(--ground); color:var(--ink); font-family:var(--sans);
-    -webkit-font-smoothing:antialiased; overflow:hidden;
-    display:flex; align-items:center; justify-content:center;
-    min-height:100svh; padding:clamp(24px,5vh,64px) 24px;
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; min-height:100vh; min-height:100svh;
+    padding:clamp(24px,5vh,64px) 24px 0;
   }
   body::before{
     content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
@@ -37,7 +37,7 @@
       radial-gradient(60% 45% at 50% 30%, var(--glow), transparent 70%),
       radial-gradient(120% 90% at 50% 120%, rgba(176,81,46,.08), transparent 60%);
   }
-  .stage{ position:relative; z-index:1; width:min(720px,100%); text-align:center;
+  .stage{ position:relative; z-index:1; width:min(720px,100%); text-align:center; margin:auto;
     display:flex; flex-direction:column; align-items:center; gap:clamp(18px,3.2vh,30px); }
   .emblem{ width:clamp(112px,17vh,168px); aspect-ratio:1; animation:rise .9s cubic-bezier(.2,.7,.2,1) both; }
   .emblem svg{ width:100%; height:100%; display:block; filter:drop-shadow(0 14px 40px rgba(176,81,46,.35)); }
@@ -53,8 +53,8 @@
     animation:rise .9s .2s cubic-bezier(.2,.7,.2,1) both; }
   .lead b{ color:var(--ink); font-weight:500; }
     animation:rise .9s .28s cubic-bezier(.2,.7,.2,1) both; }
-  .sign{ position:fixed; left:0; right:0; bottom:0; z-index:1; display:flex; align-items:center;
-    justify-content:center; gap:16px; padding:16px clamp(18px,4vw,34px);
+  .sign{ position:static; z-index:1; display:flex; align-items:center; justify-content:center; gap:16px;
+    padding:16px clamp(18px,4vw,34px); margin-top:24px;
     font-family:var(--mono); font-size:11.5px; color:var(--ink-3); border-top:1px solid var(--line); }
   .sign .brand{ color:var(--ink-2); letter-spacing:.02em; }
   .sign .brand b{ color:var(--terra); font-weight:500; }
@@ -65,7 +65,6 @@
   @keyframes rise{ from{opacity:0; transform:translateY(14px)} to{opacity:1; transform:none} }
   @media (prefers-reduced-motion:reduce){ *{animation:none!important} }
   :focus-visible{ outline:2px solid var(--terra); outline-offset:3px; }
-  @media (max-height:560px){ .sign{ position:static; margin-top:20px; border:0 } body{ overflow:auto } }
 </style>
 </head>
 <body>
@@ -80,7 +79,7 @@
     </div>
     <p class="eyebrow">{{PROJ_NAME}}</p>
     <h1>Bem-vindo à sua <span class="em">StartUp</span>.</h1>
-    <p class="lead">Sua fundação está no ar. Daqui pra frente, é construir.</p>
+    <p class="lead">Reprogramando o possível.</p>
   </main>
   <footer class="sign">
     <span class="brand">{{PROJ_NAME}} <span class="dot">·</span> by <b>Motobase</b></span>
