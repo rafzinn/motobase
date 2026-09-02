@@ -1271,6 +1271,26 @@ EOF
         info "Beszel com conta antiga — regravando a senha do painel (superuser upsert)…"
         docker exec "$bz_cid" /beszel superuser upsert "$admin_email" "$admin_password" >/dev/null 2>&1 || true
         sleep 2; auth=$(_bz_auth)
+        # A TELA do Beszel loga pela coleção 'users' (não pelo superuser) e exige
+        # verified=true. Garante um user com o e-mail/senha salvos e verificado.
+        # (Achado real 02/09: superuser ok mas a tela recusava — faltava isso.)
+        if [[ -z "$auth" ]]; then
+          local sutok urid ubody
+          sutok=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg i "$admin_email" --arg p "$admin_password" '{identity:$i,password:$p}')" \
+            http://127.0.0.1:8090/api/collections/_superusers/auth-with-password 2>/dev/null | jq -r '.token // empty')
+          if [[ -n "$sutok" ]]; then
+            ubody=$(jq -nc --arg e "$admin_email" --arg p "$admin_password" '{email:$e,password:$p,passwordConfirm:$p,verified:true}')
+            urid=$(curl -fsS --max-time 10 -H "Authorization: $sutok" "http://127.0.0.1:8090/api/collections/users/records?perPage=1" 2>/dev/null | jq -r '.items[0].id // empty')
+            if [[ -n "$urid" ]]; then
+              curl -fsS --max-time 10 -X PATCH -H "Authorization: $sutok" -H 'Content-Type: application/json' --data "$ubody" "http://127.0.0.1:8090/api/collections/users/records/$urid" >/dev/null 2>&1 || true
+            else
+              curl -fsS --max-time 10 -X POST -H "Authorization: $sutok" -H 'Content-Type: application/json' --data "$ubody" "http://127.0.0.1:8090/api/collections/users/records" >/dev/null 2>&1 || true
+            fi
+            info "conta da tela do Beszel garantida (verified, e-mail/senha salvos)"
+            sleep 1; auth=$(_bz_auth)
+          fi
+        fi
       fi
     fi
     [[ -n "$auth" ]] || { warn "Beszel não aceitou o login automático — a fundação segue; conserte depois com --repair-beszel"; return 0; }
