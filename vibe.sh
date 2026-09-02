@@ -948,7 +948,7 @@ EOF
   [[ "$DRY" != "--dry-run" ]] && sleep 8
   ok "Portainer: ${BOLD}${PORTAINER_URL}${C0}"
   sub "crie o admin em ATÉ 5 MIN — expirou? docker service update --force portainer_portainer"
-  sub "se pedir 'setup token': docker service logs portainer_portainer 2>&1 | grep -i token"
+  sub "se pedir 'setup token': rode ${BOLD}motobase portainer-token${C0} (mostra o código certo)"
   cred ""; cred "Portainer (gestão, só-tailnet): ${PORTAINER_URL}"
   cred "IP tailnet do servidor: ${TSIP}"
 
@@ -1805,11 +1805,13 @@ case "${1:-ajuda}" in
     echo "Gerando um token novo do Portainer…"
     docker service update --force portainer_portainer >/dev/null
     for _ in $(seq 1 18); do
-      token_line=$(docker service logs portainer_portainer --tail 80 2>&1 | grep -Ei 'setup.*token|token.*setup' | tail -n 1 || true)
-      if [[ -n "$token_line" ]]; then
+      token=$(docker service logs portainer_portainer --tail 120 2>&1 | grep -oE 'setup_token=[a-f0-9]+' | tail -n 1 | cut -d= -f2 || true)
+      if [[ -n "$token" ]]; then
         echo
-        echo "Copie o token mostrado abaixo e cole na tela do Portainer:"
-        echo "$token_line"
+        echo "Cole ESTE código na tela do Portainer (campo 'Security token'):"
+        echo "  $token"
+        echo
+        echo "(tem alguns minutos de validade; se der erro, rode este comando de novo)"
         exit 0
       fi
       sleep 2
