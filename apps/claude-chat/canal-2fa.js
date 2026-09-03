@@ -29,11 +29,17 @@ function temWhatsapp() { return !!(RYZE.token && RYZE.inst && RYZE.numero); }
 function temTelegram() { return !!TG.token; }
 function canal() { return temWhatsapp() ? 'whatsapp' : (temTelegram() ? 'telegram' : 'arquivo'); }
 
+let ultimoErroWa = '';
 async function whatsapp(texto) {
   const r = await fetch(`${RYZE.base}/api/message/text/${encodeURIComponent(RYZE.inst)}`, {
     method: 'POST', headers: { 'content-type': 'application/json', token: RYZE.token },
-    body: JSON.stringify({ number: RYZE.numero, message: texto }), signal: AbortSignal.timeout(15000)
+    body: JSON.stringify({ number: RYZE.numero, message: texto, linkPreview: false }), signal: AbortSignal.timeout(15000)
   });
+  if (!r.ok) {
+    let corpo = ''; try { corpo = (await r.text()).replace(/\s+/g, ' ').slice(0, 160); } catch (e) {}
+    ultimoErroWa = `Ryze HTTP ${r.status} na instância ${RYZE.inst}${corpo ? ': ' + corpo : ''}`;
+    console.warn('[chat] 2FA WhatsApp falhou — ' + ultimoErroWa);
+  }
   return r.ok;
 }
 
@@ -68,22 +74,25 @@ function arquivo(codigo) {
   } catch (e) { return false; }
 }
 
-// devolve { canal, ok, dica } — `dica` é o que o front mostra pro dono saber onde olhar
+// devolve { canal, ok, dica } — `dica` é o que o front mostra pro dono saber onde olhar.
+// Ordem: WhatsApp → Telegram → arquivo na VPS. O arquivo é o plano B que SEMPRE existe:
+// sem ele o dono ficava trancado fora do master quando o bot ainda não estava pareado.
 async function enviarCodigo(codigo, projeto) {
   const texto = `${projeto}: ${codigo} e o codigo pra liberar o modo MASTER do chat por 3 horas. Vale 5 minutos. Se nao foi voce que pediu, ignore e troque a senha (motobase senha).`;
+  const falhas = [];
   if (temWhatsapp()) {
-    let ok = false; try { ok = await whatsapp(texto); } catch (e) { ok = false; }
+    let ok = false; try { ok = await whatsapp(texto); } catch (e) { ultimoErroWa = e.message; }
     if (ok) return { canal: 'whatsapp', ok: true, dica: `enviado para o WhatsApp final ${RYZE.numero.slice(-4)}` };
-    if (temTelegram()) { let ok2 = false; try { ok2 = await telegram(texto); } catch (e) {} if (ok2) return { canal: 'telegram', ok: true, dica: 'o WhatsApp não aceitou o envio; foi pelo Telegram' }; }
-    return { canal: 'whatsapp', ok: false, dica: 'o WhatsApp não aceitou o envio — confira o pareamento em bot-admin' };
+    falhas.push('WhatsApp: ' + (ultimoErroWa || 'sem resposta') + ' (a instância está pareada em bot-admin?)');
   }
   if (temTelegram()) {
-    let ok = false; try { ok = await telegram(texto); } catch (e) { ok = false; }
-    if (ok) return { canal: 'telegram', ok: true, dica: 'enviado pelo bot dos alertas' };
-    return { canal: 'telegram', ok: false, dica: 'o Telegram não respondeu — você já mandou /start pro bot dos alertas?' };
+    let ok = false; try { ok = await telegram(texto); } catch (e) { falhas.push('Telegram: ' + e.message); }
+    if (ok) return { canal: 'telegram', ok: true, dica: falhas.length ? falhas[0] + ' — foi pelo Telegram' : 'enviado pelo bot dos alertas' };
+    if (!falhas.some(f => f.startsWith('Telegram'))) falhas.push('Telegram: sem chat id — mande /start pro bot dos alertas');
   }
   const ok = arquivo(codigo);
-  return { canal: 'arquivo', ok, dica: ok ? 'na VPS: motobase codigo' : 'não consegui gravar o código na VPS (a pasta da porta está montada?)' };
+  const prefixo = falhas.length ? falhas.join(' · ') + ' — ' : '';
+  return { canal: 'arquivo', ok, dica: ok ? prefixo + 'o código está na VPS: motobase codigo' : prefixo + 'e não consegui gravar o código na VPS (a pasta da porta está montada?)' };
 }
 
 // avisos de segurança (senha errada 3×, código errado 3×) — melhor esforço, nunca falha

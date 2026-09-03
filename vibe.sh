@@ -354,7 +354,7 @@ on_err(){
 trap on_err ERR
 
 DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; REPAIR_CHAT=""; REPAIR_BOT=""; REPAIR_WATCHDOG=""; SMOKE_FALHAS=0
-MASTER_PW=""; MASTER_PW_GERADA=""; DONO_WHATSAPP=""
+MASTER_PW=""; MASTER_PW_GERADA=""; DONO_WHATSAPP=""; WA_INST=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
@@ -1626,13 +1626,15 @@ instalar_claude_chat(){
   fi
   if docker secret inspect ryze_account_token >/dev/null 2>&1; then
     sec_lines="${sec_lines}      - ryze_account_token"$'\n'; sec_defs="${sec_defs}  ryze_account_token: { external: true }"$'\n'
-    wa_inst=$(printf '%s' "${SLUG}bot" | tr -cd '[:alnum:]')
+    # instância que manda o código: a do bot desta VPS, ou outra JÁ PAREADA da mesma conta Ryze
+    # (WA_INST em /etc/motobase/chat.env — o dono pode editar e rodar 'motobase chat')
+    wa_inst="${WA_INST:-$(printf '%s' "${SLUG}bot" | tr -cd '[:alnum:]')}"
   fi
   if docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1; then
     sec_lines="${sec_lines}      - { source: ${SLUG}_tg_token, target: tg_token }"$'\n'; sec_defs="${sec_defs}  ${SLUG}_tg_token: { external: true }"$'\n'
   fi
   mkdir -p "${D}/etc/motobase"
-  printf 'DONO_WHATSAPP=%s\nOWNER_LOGIN=%s\n' "${DONO_WHATSAPP:-}" "$owner_login" > "${D}/etc/motobase/chat.env"; chmod 600 "${D}/etc/motobase/chat.env"
+  printf 'DONO_WHATSAPP=%s\nOWNER_LOGIN=%s\nWA_INST=%s\n' "${DONO_WHATSAPP:-}" "$owner_login" "$wa_inst" > "${D}/etc/motobase/chat.env"; chmod 600 "${D}/etc/motobase/chat.env"
 
   if [[ "$DRY" == "--dry-run" ]]; then
     say "       ${DIM}[dry-run] construiria motobase/claude-chat:local e subiria a stack chat (dono: ${owner_login:-?} · porta + tailscale montados)${C0}"
