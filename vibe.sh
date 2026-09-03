@@ -1112,6 +1112,10 @@ tailscale_gestao(){
       tailscale up
     fi
     TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
+    # O Tailscale mascara (SNAT) a origem de todo tráfego que ele entrega a um container Docker:
+    # o Traefik (modo host) via 172.18.0.1 em vez do IP tailnet de quem conectou — o whois do chat
+    # falhava e TODO MUNDO caía como anônimo (roviqai, 03/09). Sem rota anunciada o SNAT não serve.
+    tailscale set --snat-subnet-routes=false >/dev/null 2>&1 || true
     [[ -n "$TSIP" ]] || die "Tailscale não subiu — rode 'tailscale up' manualmente e depois o instalador de novo."
   fi
   ok "Servidor na tailnet: ${BOLD}${TSIP}${C0}"
@@ -2100,6 +2104,10 @@ prova_real(){
       if systemctl is-active --quiet motobase-porta; then ok "Porta da VPS ativa ${DIM}(conversa com a VPS + modo master)${C0}"
       else warn "Porta da VPS parada"; sub "journalctl -u motobase-porta -n 30"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); fi
     fi
+    # identidade pelo Tailscale exige o IP real do cliente: o SNAT do tailscaled esconde-o atrás do 172.18.0.1
+    if iptables -t nat -S ts-postrouting 2>/dev/null | grep -q MASQUERADE; then
+      warn "Tailscale está mascarando o IP dos clientes — o chat não reconhece quem entra"; sub "corrige: tailscale set --snat-subnet-routes=false"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
+    else ok "Tailscale entrega o IP real dos clientes ${DIM}(identidade do chat)${C0}"; fi
   fi
   if docker service inspect wabot_wabot >/dev/null 2>&1; then
     local pc; pc=$(_smoke_hit "bot-admin.${BASE_DOMAIN}" "/")
@@ -2415,6 +2423,7 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true); TSIP="${TSIP:-${TAILSCALE_IP:-}}"
   IP=$(ip_publico)
   CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
+  tailscale set --snat-subnet-routes=false >/dev/null 2>&1 || true   # identidade do chat precisa do IP real (ver etapa Tailscale)
   say ""; say "  ${CHIP} ADICIONAR O CHAT ${C0} ${DIM}liga o chat web no seu plano Max${C0}"; say ""
   # token já guardado na VPS (do instalador): Enter mantém — não precisa gerar outro no PC
   _tok_atual=""; _tok_atual=$(bash -c 'source /etc/profile.d/claude-cred.sh 2>/dev/null; printf %s "${CLAUDE_CODE_OAUTH_TOKEN:-}"' 2>/dev/null || true)

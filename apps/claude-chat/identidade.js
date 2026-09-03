@@ -83,7 +83,8 @@ async function identificar(req) {
   if (w) return { ip, login: w.login, nome: w.nome, node: w.node, identidade: 'tailscale', dono: !!d && w.login === d };
   // sem identidade: todo mundo é "tailnet". Só é dono se o instalador NÃO fixou um
   // dono (senão qualquer anônimo viraria dono) — e mesmo assim o master exige 2FA.
-  const motivo = !disponivel() ? 'socket do tailscale não montado no container' : (motivos.get(ip) || (ip ? 'IP fora da tailnet' : 'sem IP do cliente'));
+  let motivo = !disponivel() ? 'socket do tailscale não montado no container' : (motivos.get(ip) || (ip ? 'IP fora da tailnet' : 'sem IP do cliente'));
+  if (/^(172\.(1[6-9]|2\d|3[01])\.|10\.|192\.168\.)/.test(ip)) motivo += ' — chegou um IP do Docker (' + ip + '): o Tailscale está mascarando o cliente; na VPS rode: tailscale set --snat-subnet-routes=false';
   return { ip, login: 'tailnet', nome: 'tailnet', node: '', identidade: 'anonimo', dono: !d, motivo, dono_esperado: d || '' };
 }
 
