@@ -2416,9 +2416,17 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   IP=$(ip_publico)
   CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
   say ""; say "  ${CHIP} ADICIONAR O CHAT ${C0} ${DIM}liga o chat web no seu plano Max${C0}"; say ""
-  sub "no SEU computador rode ${BOLD}claude setup-token${C0} e cole o token FINAL (sk-ant-oat…)"
-  sub "ATENÇÃO: o código de autorização do navegador NÃO é o token — o token sai DEPOIS de colar o código de volta no terminal"
+  # token já guardado na VPS (do instalador): Enter mantém — não precisa gerar outro no PC
+  _tok_atual=""; _tok_atual=$(bash -c 'source /etc/profile.d/claude-cred.sh 2>/dev/null; printf %s "${CLAUDE_CODE_OAUTH_TOKEN:-}"' 2>/dev/null || true)
+  if [[ "$_tok_atual" == sk-ant-oat* ]]; then
+    sub "já existe um setup-token nesta VPS — ${BOLD}Enter mantém o atual${C0}; cole um novo só se quiser trocar"
+  else
+    sub "no SEU computador rode ${BOLD}claude setup-token${C0} e cole o token FINAL (sk-ant-oat…)"
+    sub "ATENÇÃO: o código de autorização do navegador NÃO é o token — o token sai DEPOIS de colar o código de volta no terminal"
+  fi
   ask_tok CLTOK "Setup-token do Claude (sk-ant-oat)" '^sk-ant-oat' "sk-ant-oat01-…"
+  _tok_novo=1
+  if [[ -z "$CLTOK" && "$_tok_atual" == sk-ant-oat* ]]; then CLTOK="$_tok_atual"; _tok_novo=""; ok "mantendo o token atual"; fi
   [[ "$CLTOK" == sk-ant-oat* ]] || die "Isso não é um setup-token (tem que começar com sk-ant-oat). Gere com 'claude setup-token'."
   [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o chat precisa dos três."
   # shellcheck disable=SC1091
@@ -2427,7 +2435,7 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   if docker secret inspect ryze_account_token >/dev/null 2>&1 && [[ -z "${DONO_WHATSAPP:-}" ]]; then perguntar_whatsapp_dono; fi
   cred(){ :; }
   # token NOVO tem que valer: rotaciona o secret (stack rm → secret rm → recria no instalar)
-  if docker secret inspect claude_oauth_token >/dev/null 2>&1; then
+  if [[ -n "$_tok_novo" ]] && docker secret inspect claude_oauth_token >/dev/null 2>&1; then
     docker stack rm chat >/dev/null 2>&1 || true
     for _i in $(seq 1 20); do docker ps -a --filter name=chat_chat -q | grep -q . || break; sleep 2; done
     docker secret rm claude_oauth_token >/dev/null 2>&1 || true
