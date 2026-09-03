@@ -1,0 +1,19 @@
+[Unit]
+Description=Porta da VPS (Claude Code no host a servico do chat, so pela tailnet)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/porta/porta.py
+WorkingDirectory=/opt
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+EnvironmentFile=-/etc/motobase/porta.env
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

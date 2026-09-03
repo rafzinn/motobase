@@ -12,7 +12,7 @@
     color-scheme:dark;
     --bg:#14100D; --panel:#1C1712; --panel-2:#231D17; --line:rgba(217,164,107,.14);
     --ink:#F3ECDF; --ink-2:#C6B7A4; --ink-3:#8A7C6B;
-    --terra:#D9714A; --terra-deep:#B0512E; --gold:#E0B274;
+    --terra:#D9714A; --terra-deep:#B0512E; --gold:#E0B274; --err:#D8695B;
     --user:#241A14; --bot:#1A1611;
     --sans:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
     --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
@@ -21,28 +21,49 @@
   html,body{height:100%}
   body{background:var(--bg);color:var(--ink);font-family:var(--sans);display:flex;overflow:hidden}
   button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  code{font-family:var(--mono);font-size:.92em;background:var(--panel-2);border:1px solid var(--line);padding:1px 5px}
   /* ── sidebar ── */
   .side{width:266px;flex:0 0 266px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column}
-  .side header{padding:16px 16px 12px;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line)}
+  .side header{padding:16px 16px 12px;display:flex;flex-direction:column;gap:5px;border-bottom:1px solid var(--line)}
+  .side header .brand{display:flex;align-items:center;gap:9px}
   .side header .dot{width:9px;height:9px;background:var(--terra);border-radius:50%}
   .side header b{font-size:14px;letter-spacing:.01em}
-  .new{margin:12px;padding:11px 14px;background:var(--terra);color:#14100D;font-weight:600;font-size:13.5px;text-align:left;transition:background .15s}
+  .side header .whoami{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.03em;padding-left:18px;min-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .news{padding:12px;display:flex;flex-direction:column;gap:6px}
+  .new{padding:11px 14px;background:var(--terra);color:#14100D;font-weight:600;font-size:13.5px;text-align:left;transition:background .15s,border-color .15s}
   .new:hover{background:var(--gold)}
+  .new.sec{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);font-weight:500}
+  .new.sec:hover{background:var(--panel-2);border-color:var(--terra)}
   .convs{flex:1;overflow-y:auto;padding:4px 8px 16px}
   .conv{display:flex;align-items:center;gap:8px;padding:9px 10px;font-size:13px;color:var(--ink-2);border-left:2px solid transparent}
   .conv:hover{background:var(--panel-2);color:var(--ink)}
   .conv.on{background:var(--panel-2);color:var(--ink);border-left-color:var(--terra)}
+  .conv .tag{flex:0 0 auto;font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--ink-3);border:1px solid var(--line);padding:1px 5px}
+  .conv.on .tag{color:var(--gold);border-color:rgba(224,178,116,.45)}
   .conv .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .conv .del{opacity:0;color:var(--ink-3);font-size:16px;line-height:1;padding:0 4px}
-  .conv:hover .del{opacity:1}
+  .conv:hover .del,.conv .del:focus-visible{opacity:1}
   .conv .del:hover{color:var(--terra)}
+  .side footer{padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:6px}
+  .btn-sm{font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);padding:4px 8px;letter-spacing:.02em;white-space:nowrap}
+  .btn-sm:hover{border-color:var(--terra);color:var(--ink)}
+  .btn-sm:disabled{opacity:.45;cursor:default;border-color:var(--line);color:var(--ink-2)}
   /* ── main ── */
   .main{flex:1;display:flex;flex-direction:column;min-width:0}
-  .top{padding:14px 22px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3);letter-spacing:.04em}
+  .top{padding:14px 22px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--ink-3);letter-spacing:.04em;display:flex;align-items:center;gap:14px;flex-wrap:wrap;row-gap:8px}
+  .top .mid{flex:1;display:flex;align-items:center;justify-content:center;gap:10px;min-width:0}
+  .top .porta{display:inline-flex;align-items:center;gap:10px}
+  .top .aviso{color:var(--err);white-space:nowrap}
+  .top .aviso:empty{display:none}
+  .chip-porta{font-family:var(--mono);font-size:11px;letter-spacing:.1em;padding:3px 8px;border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+  .chip-porta.master{color:var(--gold);border-color:rgba(224,178,116,.45)}
   .stream{flex:1;overflow-y:auto;padding:26px 0}
   .wrap{max-width:760px;margin:0 auto;padding:0 22px;display:flex;flex-direction:column;gap:20px}
   .empty{margin:auto;text-align:center;color:var(--ink-3);padding:60px 20px}
   .empty h2{font-size:20px;color:var(--ink-2);font-weight:600;margin-bottom:8px}
+  .empty p{max-width:480px;margin:0 auto;line-height:1.55}
+  .empty p+p{margin-top:8px}
+  .empty .porta-info{margin:14px auto 10px}
   .msg{display:flex;gap:13px;align-items:flex-start}
   .msg .av{flex:0 0 28px;width:28px;height:28px;display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:500;border:1px solid var(--line)}
   .msg.user .av{color:var(--gold)} .msg.bot .av{background:var(--terra);color:#14100D;border-color:var(--terra)}
@@ -51,6 +72,8 @@
   .msg .body .txt{font-size:15px;line-height:1.66;color:var(--ink);white-space:pre-wrap;word-wrap:break-word}
   .msg .files{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
   .msg .files .chip{font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:3px 8px}
+  .estado{margin-top:7px;font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.02em;white-space:pre-wrap;word-break:break-word}
+  .estado::before{content:"›";color:var(--terra);margin-right:6px}
   .cursor::after{content:"▍";color:var(--terra);animation:blink 1s steps(1) infinite}
   .pill{display:inline-flex;align-items:center;gap:10px;margin-top:9px;padding:4px 10px;background:var(--panel);border:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.02em}
   .pill b{color:var(--ink-2);font-weight:500}
@@ -61,6 +84,7 @@
   .composer{border-top:1px solid var(--line);padding:14px 22px 18px;background:var(--panel)}
   .cbox{max-width:760px;margin:0 auto;background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--terra)}
   .attaches{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 0}
+  .attaches:empty{padding:0}
   .attaches .chip{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);padding:4px 8px}
   .attaches .chip button{color:var(--ink-3);font-size:14px;line-height:1}.attaches .chip button:hover{color:var(--terra)}
   .row{display:flex;align-items:flex-end;gap:8px;padding:10px 12px}
@@ -76,46 +100,107 @@
   .send:disabled{opacity:.4;cursor:default}
   .hint{max-width:760px;margin:7px auto 0;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-align:center;letter-spacing:.04em}
   .picker{display:flex;align-items:center;gap:8px}
+  .picker label{color:var(--ink-3)}
   .picker select{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);padding:4px 8px;cursor:pointer;outline:none}
   .picker select:hover{border-color:var(--terra);color:var(--ink)}
+  /* ── modal ── */
+  .modal-bg{position:fixed;inset:0;background:rgba(20,16,13,.72);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+  .modal{width:100%;max-width:460px;max-height:92vh;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--terra);padding:20px 22px;display:flex;flex-direction:column;gap:12px}
+  .modal.wide{max-width:680px}
+  .modal h3{font-size:14px;font-weight:600;letter-spacing:.01em}
+  .modal .mbody{display:flex;flex-direction:column;gap:10px}
+  .modal p{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+  .modal .step{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em}
+  .modal label{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+  .modal input{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);padding:9px 10px;outline:none;font-family:var(--mono);font-size:14px}
+  .modal input:focus{border-color:var(--terra)}
+  .modal input.code{font-size:22px;letter-spacing:.5em;text-align:center}
+  .modal textarea.big{flex:none;width:100%;height:320px;max-height:none;resize:vertical;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);padding:10px 12px;font-family:var(--sans);font-size:14px;line-height:1.55}
+  .modal textarea.big:focus{border-color:var(--terra)}
+  .modal textarea.big[readonly]{color:var(--ink-2)}
+  .modal .err{color:var(--err);font-size:13px;line-height:1.45}
+  .modal .dica{font-family:var(--mono);font-size:12px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);padding:8px 10px;white-space:pre-wrap;word-break:break-word}
+  .modal .acts{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:4px}
+  .modal .acts .st{margin-right:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .modal .acts .st.ok{color:var(--gold)}
+  .modal .acts .st.erro{color:var(--err)}
+  .btn{padding:9px 14px;font-size:13px;font-weight:600;background:var(--terra);color:#14100D;transition:background .15s,border-color .15s}
+  .btn:hover{background:var(--gold)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.ghost{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);font-weight:500}
+  .btn.ghost:hover{background:var(--panel-2);border-color:var(--terra)}
+  .toast{position:fixed;left:50%;bottom:112px;transform:translateX(-50%);max-width:min(560px,90vw);background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--err);color:var(--ink-2);font-family:var(--mono);font-size:11.5px;padding:9px 12px;z-index:60}
+  .toast.ok{border-left-color:var(--gold)}
   :focus-visible{outline:2px solid var(--terra);outline-offset:2px}
   @media(max-width:680px){.side{display:none}}
 </style>
 </head>
 <body>
   <aside class="side">
-    <header><span class="dot"></span><b id="appname">Claude</b></header>
-    <button class="new" id="new">＋ Nova conversa</button>
+    <header>
+      <div class="brand"><span class="dot"></span><b id="appname">Claude</b></div>
+      <div class="whoami" id="whoami">…</div>
+    </header>
+    <div class="news">
+      <button class="new" id="new">＋ Nova conversa</button>
+      <button class="new sec" id="newvps" hidden>＋ Conversa com a VPS</button>
+    </div>
     <div class="convs" id="convs"></div>
+    <footer>
+      <button class="btn-sm" id="btnRegras" hidden>Regras</button>
+      <button class="btn-sm" id="btnNota" hidden>Sobre mim</button>
+    </footer>
   </aside>
   <main class="main">
-    <div class="top" id="top" style="display:flex;align-items:center;justify-content:space-between"><span id="topmodel">modelo carregando…</span><span class="picker"><label for="model" style="color:var(--ink-3)">modelo</label><select id="model"></select></span></div>
+    <div class="top" id="top">
+      <span id="topmodel">modelo carregando…</span>
+      <span class="mid">
+        <span class="porta" id="porta" hidden>
+          <span class="chip-porta" data-live>LEITURA</span>
+          <button class="btn-sm" id="btnMaster" hidden>Liberar master</button>
+        </span>
+        <span class="aviso" id="aviso" role="status"></span>
+      </span>
+      <span class="picker"><label for="model">modelo</label><select id="model"></select></span>
+    </div>
     <div class="stream" id="stream"><div class="empty"><h2>Comece uma conversa</h2><p>Suas conversas ficam salvas aqui, só nesta VPS.</p></div></div>
     <div class="composer">
       <div class="cbox">
         <div class="attaches" id="attaches"></div>
         <div class="row">
-          <button class="icon" id="attach" title="Anexar imagem ou PDF" aria-label="Anexar">
-            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <button class="icon" id="attach" title="Anexar imagem ou PDF" aria-label="Anexar imagem ou PDF">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </button>
-          <button class="icon" id="mic" title="Ditar (pt-BR)" aria-label="Microfone" hidden>
-            <svg viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>
+          <button class="icon" id="mic" title="Ditar (pt-BR)" aria-label="Ditar por voz" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg>
           </button>
-          <textarea id="input" rows="1" placeholder="Escreva para o Claude…"></textarea>
+          <textarea id="input" rows="1" placeholder="Escreva para o Claude…" aria-label="Mensagem"></textarea>
           <button class="icon send" id="send" title="Enviar" aria-label="Enviar" disabled>
-            <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
           </button>
         </div>
       </div>
       <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" multiple hidden>
-      <div class="hint">Sem login — o acesso é protegido pela tailnet. Anexos: imagens e PDF, até 5 arquivos de 20 MB.</div>
+      <div class="hint" id="hint">Sem login — o acesso é protegido pela tailnet. Anexos: imagens e PDF, até 5 arquivos de 20 MB.</div>
     </div>
   </main>
+  <div class="toast" id="toast" role="status" hidden></div>
 <script>
 const $=s=>document.querySelector(s);
+const HINT='Sem login — o acesso é protegido pela tailnet. Anexos: imagens e PDF, até 5 arquivos de 20 MB.';
+const HINT_VPS=' · Na conversa com a VPS os anexos vão como arquivo pro Claude do host.';
+const VAZIO='<div class="empty"><h2>Comece uma conversa</h2><p>Suas conversas ficam salvas aqui, só nesta VPS.</p></div>';
 let convAtual=null, anexos=[], gravando=false, enviando=false;
+let me=null, modoAtual='assistente', timerMaster=null, timerToast=null;
 
-async function api(url,opt){ const r=await fetch(url,opt); if(!r.ok&&r.headers.get('content-type')?.includes('json')) throw await r.json(); return r; }
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+function btn(txt,cls,fn){const b=el('button',cls,txt);b.type='button';b.onclick=fn;return b;}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtHora(ms){return new Date(ms).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+async function postJson(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});const d=await r.json().catch(()=>({}));return {r,d};}
+function avisar(msg,tipo){const t=$('#toast');t.textContent=msg;t.className='toast'+(tipo==='ok'?' ok':'');t.hidden=false;clearTimeout(timerToast);timerToast=setTimeout(()=>{t.hidden=true;},6000);}
+
+// ── config (modelo) ──
 let modeloSel=null;
 async function carregarConfig(){ try{const c=await(await fetch('/api/config')).json();
   $('#appname').textContent=c.title; document.title=c.title;
@@ -126,16 +211,224 @@ async function carregarConfig(){ try{const c=await(await fetch('/api/config')).j
   $('#topmodel').textContent='Claude '+rotulo;
   sel.onchange=()=>{modeloSel=sel.value;$('#topmodel').textContent='Claude '+sel.options[sel.selectedIndex].text;};
 }catch(e){} }
-async function listar(){
-  const cs=await(await fetch('/api/conversations')).json();
-  const el=$('#convs'); el.innerHTML='';
-  for(const c of cs){
-    const d=document.createElement('div'); d.className='conv'+(c.id===convAtual?' on':'');
-    const t=document.createElement('span'); t.className='t'; t.textContent=c.title; t.onclick=()=>abrir(c.id);
-    const x=document.createElement('button'); x.className='del'; x.textContent='×'; x.title='Apagar';
-    x.onclick=async(e)=>{e.stopPropagation(); await fetch('/api/conversations/'+c.id,{method:'DELETE'}); if(convAtual===c.id){convAtual=null; $('#stream').innerHTML='<div class="empty"><h2>Comece uma conversa</h2><p>Suas conversas ficam salvas aqui, só nesta VPS.</p></div>';} listar();};
-    d.append(t,x); el.append(d);
+
+// ── quem sou / porta ──
+const MASTER_VAZIO={aberto:false,ate:null,tem_senha:false,bloqueado_seg:0,canal:null};
+async function carregarMe(){
+  try{ const r=await fetch('/api/me'); if(!r.ok) throw new Error('HTTP '+r.status); me=await r.json(); }
+  catch(e){ me={login:'',nome:'',identidade:'anonimo',dono:false,porta:false,master:null}; }
+  me.master=Object.assign({},MASTER_VAZIO,me.master||{});
+  renderMe(); atualizarPorta();
+}
+function renderMe(){
+  const partes=[]; const quem=me.nome||me.login; if(quem) partes.push(quem);
+  if(me.identidade==='anonimo') partes.push('tailnet · sem identidade');
+  $('#whoami').textContent=partes.join(' · ')||'—';
+  $('#newvps').hidden=!(me.dono&&me.porta);
+  $('#btnRegras').hidden=false; $('#btnNota').hidden=false;
+  $('#btnMaster').hidden=!me.dono;
+}
+function masterAberto(){const m=me?me.master:MASTER_VAZIO;return !!(m.aberto&&(!m.ate||m.ate>Date.now()));}
+function atualizarPorta(){
+  const vps=modoAtual==='vps', m=me?me.master:MASTER_VAZIO, aberto=masterAberto();
+  const travadoSeg=!aberto&&m.bloqueado_seg>0?m.bloqueado_seg:0;
+  $('#aviso').textContent=travadoSeg?'Travado por '+Math.ceil(travadoSeg/60)+' min':'';
+  $('#porta').hidden=!vps;
+  input.placeholder=vps?'Peça algo à sua VPS…':'Escreva para o Claude…';
+  $('#hint').textContent=HINT+(vps?HINT_VPS:'');
+  document.querySelectorAll('.chip-porta[data-live]').forEach(ch=>{ch.textContent=aberto?'MASTER até '+fmtHora(m.ate):'LEITURA';ch.classList.toggle('master',aberto);});
+  const b=$('#btnMaster'); b.textContent=aberto?'Fechar master':'Liberar master'; b.disabled=!!travadoSeg;
+  b.title=travadoSeg?'Muitas tentativas — espere o tempo do bloqueio':'';
+  clearTimeout(timerMaster);
+  if(aberto&&m.ate) timerMaster=setTimeout(carregarMe,Math.min(m.ate-Date.now()+1000,2147483647));
+  else if(travadoSeg) timerMaster=setTimeout(carregarMe,Math.min(travadoSeg*1000+1000,2147483647));
+}
+function telaVazia(titulo,sub){
+  let h='<div class="empty"><h2>'+esc(titulo)+'</h2>';
+  if(modoAtual==='vps') h+='<p class="porta-info"><span class="chip-porta" data-live>LEITURA</span></p><p>Em LEITURA o Claude só consulta a VPS. Libere o master pra ele escrever, subir serviços e usar o shell (3 h).</p>';
+  h+='<p>'+esc(sub||'Mande a primeira mensagem.')+'</p></div>';
+  return h;
+}
+
+// ── modal genérico (Esc fecha, foco volta pro botão de origem) ──
+let modalAberto=null, focoAntes=null;
+function abrirModal(titulo,opt){
+  opt=opt||{}; fecharModal();
+  focoAntes=document.activeElement;
+  const bg=el('div','modal-bg');
+  const box=el('div','modal'+(opt.wide?' wide':'')); box.setAttribute('role','dialog'); box.setAttribute('aria-modal','true'); box.setAttribute('aria-labelledby','mtitle');
+  const h=el('h3',null,titulo); h.id='mtitle';
+  const body=el('div','mbody'); const acts=el('div','acts');
+  box.append(h,body,acts); bg.append(box); document.body.append(bg);
+  bg.addEventListener('mousedown',e=>{ if(e.target===bg&&!box.dataset.dirty) fecharModal(); });
+  modalAberto={bg,box,h,body,acts};
+  return modalAberto;
+}
+function fecharModal(){ if(!modalAberto) return; modalAberto.bg.remove(); modalAberto=null; const f=focoAntes; focoAntes=null; if(f&&f.isConnected&&f.focus) f.focus(); }
+document.addEventListener('keydown',e=>{
+  if(!modalAberto) return;
+  if(e.key==='Escape'){e.preventDefault();fecharModal();return;}
+  if(e.key==='Tab'){
+    const f=[...modalAberto.box.querySelectorAll('input,textarea,button,select,a[href],[tabindex]:not([tabindex="-1"])')].filter(x=>!x.disabled&&x.offsetParent!==null);
+    if(!f.length) return; const a=f[0], z=f[f.length-1];
+    if(e.shiftKey&&document.activeElement===a){e.preventDefault();z.focus();}
+    else if(!e.shiftKey&&document.activeElement===z){e.preventDefault();a.focus();}
   }
+});
+function mostrarErro(p,msg){p.textContent=msg;p.hidden=false;}
+
+// ── master: senha → código ──
+function abrirMaster(){
+  if(!me.master.tem_senha){
+    const md=abrirModal('Liberar master');
+    const p=el('p'); p.innerHTML='Nenhuma senha mestra definida. No terminal da VPS rode <code>motobase senha</code>.'; md.body.append(p);
+    const f=btn('Fechar','btn ghost',fecharModal); md.acts.append(f); f.focus(); return;
+  }
+  passoSenha();
+}
+function passoSenha(aviso){
+  const md=abrirModal('Liberar master');
+  md.body.append(el('div','step','passo 1 de 2 · senha mestra'));
+  md.body.append(el('p',null,'O master libera escrita, deploy e shell na VPS por 3 h. Depois da senha, um código de 4 dígitos chega num canal separado.'));
+  if(aviso){ const a=el('p','err',aviso); a.setAttribute('role','alert'); md.body.append(a); }
+  const lab=el('label',null,'Senha mestra'); lab.htmlFor='msenha';
+  const inp=el('input'); inp.id='msenha'; inp.type='password'; inp.autocomplete='off'; inp.spellcheck=false;
+  const err=el('p','err'); err.setAttribute('role','alert'); err.hidden=true;
+  md.body.append(lab,inp,err);
+  const st=el('span','st'); st.setAttribute('aria-live','polite');
+  const ok=btn('Continuar','btn',enviarSenha);
+  md.acts.append(st,btn('Cancelar','btn ghost',fecharModal),ok);
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();enviarSenha();} });
+  inp.focus();
+  async function enviarSenha(){
+    const senha=inp.value; if(!senha){ mostrarErro(err,'Digite a senha mestra.'); inp.focus(); return; }
+    ok.disabled=true; inp.disabled=true; err.hidden=true; st.textContent='verificando…';
+    let r,d; try{ ({r,d}=await postJson('/api/master/senha',{senha})); }
+    catch(e){ if(modalAberto!==md) return; ok.disabled=false; inp.disabled=false; st.textContent=''; mostrarErro(err,'Sem resposta do servidor. Confira a conexão e tente de novo.'); inp.focus(); return; }
+    if(modalAberto!==md) return;
+    if(r.status===200){ passoCodigo(d); return; }
+    if(r.status===423){ fecharModal(); travado(d.bloqueado_seg); return; }
+    ok.disabled=false; inp.disabled=false; st.textContent=''; inp.value='';
+    mostrarErro(err,d.error||(r.status===401?'Senha incorreta.':r.status===503?'A porta da VPS não respondeu. Tente de novo em instantes.':'Não deu pra verificar a senha (HTTP '+r.status+').'));
+    inp.focus();
+  }
+}
+function passoCodigo(d){
+  const md=abrirModal('Liberar master');
+  const textos={
+    whatsapp:'Código de 4 dígitos enviado no seu WhatsApp. Vale 5 min.',
+    telegram:'Código enviado no seu Telegram (o bot dos alertas). Vale 5 min.',
+    arquivo:'Sem WhatsApp/Telegram configurado: o código foi gravado na VPS. No terminal dela rode <code>motobase codigo</code>. Vale 5 min.'
+  };
+  md.body.append(el('div','step','passo 2 de 2 · código'));
+  const p=el('p'); p.innerHTML=textos[d.canal]||'Código de 4 dígitos enviado. Vale 5 min.'; md.body.append(p);
+  if(d.dica) md.body.append(el('div','dica',String(d.dica)));
+  const lab=el('label',null,'Código'); lab.htmlFor='mcod';
+  const inp=el('input','code'); inp.id='mcod'; inp.type='text'; inp.inputMode='numeric'; inp.maxLength=4; inp.pattern='[0-9]*'; inp.autocomplete='one-time-code'; inp.spellcheck=false;
+  const err=el('p','err'); err.setAttribute('role','alert'); err.hidden=true;
+  md.body.append(lab,inp,err);
+  const st=el('span','st'); st.setAttribute('aria-live','polite');
+  const ok=btn('Liberar','btn',enviarCodigo); ok.disabled=true;
+  md.acts.append(st,btn('Cancelar','btn ghost',fecharModal),ok);
+  inp.addEventListener('input',()=>{ inp.value=inp.value.replace(/\D/g,'').slice(0,4); ok.disabled=inp.value.length!==4; });
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();enviarCodigo();} });
+  inp.focus();
+  async function enviarCodigo(){
+    const codigo=inp.value; if(codigo.length!==4){ mostrarErro(err,'O código tem 4 dígitos.'); inp.focus(); return; }
+    ok.disabled=true; inp.disabled=true; err.hidden=true; st.textContent='conferindo…';
+    let r,rd; try{ ({r,d:rd}=await postJson('/api/master/codigo',{codigo})); }
+    catch(e){ if(modalAberto!==md) return; inp.disabled=false; ok.disabled=false; st.textContent=''; mostrarErro(err,'Sem resposta do servidor. Confira a conexão e tente de novo.'); inp.focus(); return; }
+    if(modalAberto!==md) return;
+    if(r.status===200){
+      fecharModal();
+      if(rd.ate){ me.master.aberto=true; me.master.ate=rd.ate; me.master.bloqueado_seg=0; atualizarPorta(); avisar('Master liberado até '+fmtHora(rd.ate)+'.','ok'); }
+      await carregarMe(); return;
+    }
+    if(r.status===410){ passoSenha('O código venceu, comece de novo.'); return; }
+    if(r.status===423){ fecharModal(); travado(rd.bloqueado_seg); return; }
+    inp.disabled=false; st.textContent=''; inp.value=''; ok.disabled=true;
+    mostrarErro(err,rd.error||(r.status===401?'Código incorreto.':'Não deu pra conferir o código (HTTP '+r.status+').'));
+    inp.focus();
+  }
+}
+function travado(seg){
+  me.master.aberto=false; me.master.bloqueado_seg=Math.max(1,Number(seg)||60);
+  atualizarPorta();
+  avisar('Muitas tentativas. Travado por '+Math.ceil(me.master.bloqueado_seg/60)+' min.');
+}
+function confirmarFecharMaster(){
+  const md=abrirModal('Fechar master');
+  md.body.append(el('p',null,'A porta volta pra LEITURA agora. Pra liberar de novo vai precisar da senha mestra e de um código novo.'));
+  const ok=btn('Fechar master','btn',async()=>{
+    ok.disabled=true; let r,d;
+    try{ ({r,d}=await postJson('/api/master/fechar',{})); }catch(e){ ok.disabled=false; avisar('Sem resposta do servidor. Confira a conexão e tente de novo.'); return; }
+    if(!r.ok){ ok.disabled=false; avisar('Não deu pra fechar'+(d.error?': '+d.error:' (HTTP '+r.status+').')); return; }
+    fecharModal(); me.master.aberto=false; me.master.ate=null; atualizarPorta();
+    avisar('Master fechado. Porta em LEITURA.','ok'); carregarMe();
+  });
+  const cancel=btn('Cancelar','btn ghost',fecharModal);
+  md.acts.append(cancel,ok); cancel.focus();
+}
+
+// ── editores de texto: Regras / Sobre mim ──
+async function abrirEditor(cfg){
+  const md=abrirModal(cfg.titulo,{wide:true});
+  md.body.append(el('p','step','carregando…'));
+  let d; try{ const r=await fetch(cfg.url); d=await r.json().catch(()=>({})); if(!r.ok) throw d; }
+  catch(e){ if(modalAberto!==md) return; md.body.innerHTML=''; md.body.append(el('p','err','Não deu pra carregar'+(e&&e.error?': '+e.error:'. Tente de novo.'))); const f=btn('Fechar','btn ghost',fecharModal); md.acts.append(f); f.focus(); return; }
+  if(modalAberto!==md) return;
+  const pode=d.pode_editar!==false;
+  if(!pode&&cfg.tituloRO) md.h.textContent=cfg.tituloRO;
+  md.body.innerHTML='';
+  md.body.append(el('p',null,pode?cfg.intro:(cfg.introRO||cfg.intro)));
+  const lab=el('label',null,cfg.label); lab.htmlFor='medit';
+  const ta=el('textarea','big'); ta.id='medit'; ta.value=d.texto||''; ta.readOnly=!pode; ta.spellcheck=true;
+  md.body.append(lab,ta);
+  const st=el('span','st'); st.setAttribute('aria-live','polite'); md.acts.append(st);
+  if(!pode){ const f=btn('Fechar','btn ghost',fecharModal); md.acts.append(f); ta.focus(); return; }
+  ta.addEventListener('input',()=>{ md.box.dataset.dirty='1'; if(st.textContent==='salvo'){st.textContent='';st.className='st';} });
+  const salvar=btn('Salvar','btn',async()=>{
+    salvar.disabled=true; st.className='st'; st.textContent='salvando…';
+    try{
+      const r=await fetch(cfg.url,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({texto:ta.value})});
+      const rd=await r.json().catch(()=>({})); if(!r.ok) throw rd;
+      delete md.box.dataset.dirty; st.className='st ok'; st.textContent='salvo';
+      setTimeout(()=>{ if(st.textContent==='salvo'){st.textContent='';st.className='st';} },2000);
+    }catch(e){ st.className='st erro'; st.textContent='Não salvou'+(e&&e.error?': '+e.error:'. Tente de novo.'); }
+    salvar.disabled=false;
+  });
+  md.acts.append(btn('Cancelar','btn ghost',fecharModal),salvar);
+  ta.focus();
+}
+function abrirRegras(){ abrirEditor({titulo:'Regras',tituloRO:'Regras deste chat',intro:'Regras globais que o assistente segue em todas as conversas deste chat. Só o dono edita.',introRO:'Regras globais que o assistente segue em todas as conversas deste chat. Só o dono edita — aqui é só leitura.',label:'Regras',url:'/api/rules'}); }
+function abrirNota(){ abrirEditor({titulo:'Sobre mim',intro:'Uma nota que o assistente lê antes de responder você. Só vale pra sua conta.',label:'O que o assistente deve saber sobre você',url:'/api/me/nota'}); }
+
+// ── conversas ──
+async function listar(){
+  let cs=[]; try{ cs=await(await fetch('/api/conversations')).json(); }catch(e){ return; }
+  const el_=$('#convs'); el_.innerHTML='';
+  for(const c of cs){
+    const d=el('div','conv'+(c.id===convAtual?' on':''));
+    if(c.mode==='vps') d.append(el('span','tag','VPS'));
+    const t=el('span','t',c.title); t.onclick=()=>abrir(c.id); t.tabIndex=0; t.setAttribute('role','button');
+    t.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();abrir(c.id);} };
+    const x=btn('×','del',(e)=>{e.stopPropagation();confirmarApagar(c);}); x.title='Apagar'; x.setAttribute('aria-label','Apagar conversa: '+c.title);
+    d.append(t,x); el_.append(d);
+  }
+}
+function confirmarApagar(c){
+  const md=abrirModal('Apagar conversa');
+  md.body.append(el('p',null,'Apagar "'+c.title+'"? Não dá pra desfazer.'));
+  const ok=btn('Apagar','btn',async()=>{
+    ok.disabled=true;
+    try{ const r=await fetch('/api/conversations/'+c.id,{method:'DELETE'}); if(!r.ok) throw await r.json().catch(()=>({})); }
+    catch(e){ ok.disabled=false; avisar('Não deu pra apagar'+(e&&e.error?': '+e.error:'. Tente de novo.')); return; }
+    fecharModal();
+    if(convAtual===c.id){ convAtual=null; modoAtual='assistente'; $('#stream').innerHTML=VAZIO; atualizarPorta(); }
+    listar();
+  });
+  const cancel=btn('Cancelar','btn ghost',fecharModal);
+  md.acts.append(cancel,ok); cancel.focus();
 }
 function bolha(role,text){
   const m=document.createElement('div'); m.className='msg '+(role==='user'?'user':'bot');
@@ -160,25 +453,41 @@ function pill(u){
     html+='<span class="sep">·</span><span>US$ '+Number(u.usd||0).toFixed(4)+'</span>'
       +'<span class="sep">·</span><span class="brl">R$ '+Number(u.brl||0).toFixed(4)+'</span>';
   }
+  if(u.segundos!=null) html+='<span class="sep">·</span><span>'+Math.round(Number(u.segundos))+'s</span>';
   p.innerHTML=html;
   return p;
 }
 function chipsAnexos(lista,alvo){ for(const a of lista){ const c=document.createElement('div'); c.className='chip'; c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name; alvo.append(c);} }
 async function abrir(id){
   convAtual=id; listar();
-  const c=await(await fetch('/api/conversations/'+id)).json();
+  let c; try{ const r=await fetch('/api/conversations/'+id); c=await r.json().catch(()=>({})); if(!r.ok) throw c; }
+  catch(e){ if(convAtual!==id) return; modoAtual='assistente'; $('#stream').innerHTML='<div class="empty"><h2>Não deu pra abrir a conversa</h2><p>'+esc(e&&e.error?e.error:'Tente de novo.')+'</p></div>'; atualizarPorta(); return; }
+  if(convAtual!==id) return;
+  modoAtual=c.mode==='vps'?'vps':'assistente';
   const s=$('#stream'); s.innerHTML='<div class="wrap"></div>';
-  for(const m of c.messages){ const tx=bolha(m.role,m.text); if(m.attachments?.length){const f=document.createElement('div');f.className='files';chipsAnexos(m.attachments,f);tx.parentElement.append(f);} if(m.usage){tx.parentElement.append(pill(m.usage));} }
-  if(!c.messages.length) s.innerHTML='<div class="empty"><h2>'+c.title+'</h2><p>Mande a primeira mensagem.</p></div>';
+  const msgs=c.messages||[];
+  for(const m of msgs){ const tx=bolha(m.role,m.text); if(m.attachments?.length){const f=document.createElement('div');f.className='files';chipsAnexos(m.attachments,f);tx.parentElement.append(f);} if(m.usage){tx.parentElement.append(pill(m.usage));} }
+  if(!msgs.length) s.innerHTML=telaVazia(c.title);
+  atualizarPorta();
 }
-async function novaConversa(){ const c=await(await fetch('/api/conversations',{method:'POST'})).json(); convAtual=c.id; await listar(); $('#stream').innerHTML='<div class="empty"><h2>Nova conversa</h2><p>Mande a primeira mensagem.</p></div>'; $('#input').focus(); return c.id; }
+async function novaConversa(mode){
+  mode=mode==='vps'?'vps':'assistente';
+  let r,c; try{ ({r,d:c}=await postJson('/api/conversations',{mode})); }
+  catch(e){ avisar('Sem resposta do servidor. Confira a conexão e tente de novo.'); return null; }
+  if(!r.ok){ avisar('Não deu pra criar a conversa'+(c.error?': '+c.error:' (HTTP '+r.status+').')); return null; }
+  convAtual=c.id; modoAtual=c.mode==='vps'?'vps':'assistente';
+  await listar();
+  $('#stream').innerHTML=telaVazia(c.title||'Nova conversa');
+  atualizarPorta(); $('#input').focus();
+  return c.id;
+}
 
 // anexos
 $('#attach').onclick=()=>$('#file').click();
 $('#file').onchange=async(e)=>{
   for(const f of e.target.files){
-    if(anexos.length>=5){alert('Máximo 5 anexos.');break;}
-    if(f.size>20*1024*1024){alert(f.name+' passa de 20 MB.');continue;}
+    if(anexos.length>=5){avisar('Máximo 5 anexos por mensagem.');break;}
+    if(f.size>20*1024*1024){avisar(f.name+' passa de 20 MB e ficou de fora.');continue;}
     const kind=f.type==='application/pdf'?'pdf':'image';
     const data=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(f);});
     anexos.push({name:f.name,kind,media_type:f.type,data});
@@ -186,8 +495,8 @@ $('#file').onchange=async(e)=>{
   e.target.value=''; renderAnexos();
 };
 function renderAnexos(){
-  const el=$('#attaches'); el.innerHTML='';
-  anexos.forEach((a,i)=>{const c=document.createElement('div');c.className='chip';c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name;const x=document.createElement('button');x.textContent='×';x.onclick=()=>{anexos.splice(i,1);renderAnexos();};c.append(x);el.append(c);});
+  const el_=$('#attaches'); el_.innerHTML='';
+  anexos.forEach((a,i)=>{const c=document.createElement('div');c.className='chip';c.textContent=(a.kind==='pdf'?'📄 ':'🖼 ')+a.name;const x=btn('×',null,()=>{anexos.splice(i,1);renderAnexos();});x.setAttribute('aria-label','Remover anexo '+a.name);c.append(x);el_.append(c);});
   atualizarBotao();
 }
 
@@ -209,37 +518,47 @@ function atualizarBotao(){$('#send').disabled=enviando||(!input.value.trim()&&!a
 input.addEventListener('input',()=>{autosize();atualizarBotao();});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}});
 $('#send').onclick=enviar;
-$('#new').onclick=novaConversa;
+$('#new').onclick=()=>novaConversa('assistente');
+$('#newvps').onclick=()=>novaConversa('vps');
+$('#btnRegras').onclick=abrirRegras;
+$('#btnNota').onclick=abrirNota;
+$('#btnMaster').onclick=()=>{ masterAberto()?confirmarFecharMaster():abrirMaster(); };
 
 async function enviar(){
   const texto=input.value.trim(); if((!texto&&!anexos.length)||enviando) return;
-  if(!convAtual) await novaConversa();
+  if(!convAtual){ const id=await novaConversa('assistente'); if(!id) return; }
   enviando=true; atualizarBotao();
   const meusAnexos=anexos.slice(); const metaChips=meusAnexos.map(a=>({name:a.name,kind:a.kind}));
   const txUser=bolha('user',texto); if(metaChips.length){const f=document.createElement('div');f.className='files';chipsAnexos(metaChips,f);txUser.parentElement.append(f);}
   input.value=''; anexos=[]; renderAnexos(); autosize();
   const txBot=bolha('assistant',''); txBot.classList.add('cursor');
+  const estado=el('div','estado','enviando…'); estado.setAttribute('aria-live','polite'); txBot.parentElement.append(estado);
+  let estadoAuto=true;                       // até o backend mandar um `estado`, a linha é só "enviando…"
+  const rolar=()=>{$('#stream').scrollTop=$('#stream').scrollHeight;};
   try{
     const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({conversation_id:convAtual,message:texto,attachments:meusAnexos,model:modeloSel})});
-    if(!r.ok||!r.body){const e=await r.json().catch(()=>({error:'falha'}));txBot.textContent='⚠ '+(e.error||'erro');txBot.classList.remove('cursor');enviando=false;atualizarBotao();return;}
-    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
-    while(true){
+    if(!r.ok||!r.body){const e=await r.json().catch(()=>({error:'falha'}));estado.remove();txBot.textContent='⚠ '+(e.error||'erro');txBot.classList.remove('cursor');enviando=false;atualizarBotao();return;}
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='', acabou=false;
+    while(!acabou){
       const {done,value}=await reader.read(); if(done)break;
       buf+=dec.decode(value,{stream:true}); let idx;
       while((idx=buf.indexOf('\n\n'))>=0){
         const bloco=buf.slice(0,idx); buf=buf.slice(idx+2);
         const ev=(bloco.match(/^event: (.*)$/m)||[])[1]; const dl=(bloco.match(/^data: (.*)$/m)||[])[1];
         if(!dl)continue; let d={}; try{d=JSON.parse(dl);}catch(e){}
-        if(ev==='delta'){txBot.textContent+=d.t||'';$('#stream').scrollTop=$('#stream').scrollHeight;}
-        else if(ev==='uso'){txBot.parentElement.append(pill(d));$('#stream').scrollTop=$('#stream').scrollHeight;}
-        else if(ev==='erro'){txBot.textContent+='\n⚠ '+(d.detail||d.message||('HTTP '+d.status));}
+        if(ev==='delta'){ if(estadoAuto) estado.hidden=true; txBot.textContent+=d.t||''; rolar(); }
+        else if(ev==='estado'){ estadoAuto=false; estado.textContent=d.texto||''; estado.hidden=!d.texto; rolar(); }
+        else if(ev==='uso'){ txBot.parentElement.append(pill(d)); rolar(); }
+        else if(ev==='erro'){ estado.remove(); txBot.textContent+='\n⚠ '+(d.detail||d.message||d.error||('HTTP '+d.status)); rolar(); }
+        else if(ev==='fim'){ estado.remove(); acabou=true; break; }
       }
     }
+    if(acabou){ try{reader.cancel();}catch(e){} }
   }catch(e){txBot.textContent+='\n⚠ conexão interrompida';}
-  txBot.classList.remove('cursor'); enviando=false; atualizarBotao(); listar();
+  estado.remove(); txBot.classList.remove('cursor'); enviando=false; atualizarBotao(); listar();
 }
 
-carregarConfig(); listar();
+carregarConfig(); carregarMe(); listar();
 </script>
 </body>
 </html>

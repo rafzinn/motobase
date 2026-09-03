@@ -312,6 +312,31 @@ ask_tok(){ # $1=var $2=pergunta $3=regex $4=exemplo
   printf -v "$1" '%s' "$v"
 }
 
+# senha mestra do modo MASTER do chat (conversa com a VPS): com ela + código de 4
+# dígitos por outro canal, o Claude do chat opera a VPS por 3 h. Enter = automática.
+perguntar_senha_master(){
+  say ""
+  say "     ${BOLD}Modo master do chat${C0} ${DIM}— senha mestra pra liberar escrita/deploy na conversa com a VPS${C0}"
+  sub "senha + código de 4 dígitos (WhatsApp/Telegram/arquivo na VPS) = o Claude opera a VPS por 3 h"
+  sub "Enter = gero uma forte e mostro no fim ${DIM}(trocar depois: motobase senha)${C0}"
+  while true; do
+    read_masked "Senha mestra (mín. 8, ou Enter p/ automática)"
+    MASTER_PW="${REPLY//$'\r'/}"; MASTER_PW="${MASTER_PW// /}"
+    [[ -z "$MASTER_PW" ]] && { info "ok — senha automática"; break; }
+    [[ ${#MASTER_PW} -ge 8 ]] && { ok "senha mestra definida por você"; break; }
+    warn "curta demais — mínimo 8 caracteres (ou Enter pra automática)"
+  done
+}
+# WhatsApp do dono: pra onde vai o código do modo master (pela Ryze, como o motobot_alerta)
+perguntar_whatsapp_dono(){
+  sub "seu WhatsApp pessoal (só dígitos, com DDI+DDD) recebe o código do modo master; Enter pula"
+  ask DONO_WHATSAPP "Seu WhatsApp (ex: 5521999998888)"
+  DONO_WHATSAPP=$(printf '%s' "$DONO_WHATSAPP" | tr -cd '0-9')
+  if [[ -n "$DONO_WHATSAPP" && ! "$DONO_WHATSAPP" =~ ^[0-9]{10,15}$ ]]; then warn "número estranho (${DONO_WHATSAPP}) — o código vai por Telegram ou arquivo"; DONO_WHATSAPP=""; fi
+  [[ -n "$DONO_WHATSAPP" ]] && ok "código do master vai pro WhatsApp final ${DONO_WHATSAPP: -4}"
+  return 0
+}
+
 ETAPA="preparação"
 on_err(){
   say ""
@@ -329,6 +354,7 @@ on_err(){
 trap on_err ERR
 
 DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; REPAIR_CHAT=""; REPAIR_BOT=""; REPAIR_WATCHDOG=""; SMOKE_FALHAS=0
+MASTER_PW=""; MASTER_PW_GERADA=""; DONO_WHATSAPP=""
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
@@ -664,6 +690,7 @@ questionario(){
   sub "um token só liga os dois: o Claude Code na VPS E o chat web — tudo na assinatura, sem custo de API"
   link "https://console.anthropic.com/settings/keys"
   ask_tok CLTOK "Setup-token do Claude (sk-ant-oat — liga o Claude Code E o chat, no seu plano)" '^sk-ant-' "sk-ant-oat01-…"
+  [[ "$CLTOK" == sk-ant-oat* ]] && perguntar_senha_master
 
   say ""
   say "     ${BOLD}OpenAI${C0} ${DIM}— opcional · para aplicações que usam a API${C0}"
@@ -677,6 +704,7 @@ questionario(){
   sub "token da SUA conta Ryze (um só serve todos os números); Enter pula"
   link "https://ryzeapi.cloud"
   ask_tok RYZETOK "Token da conta Ryze" '^.{16,}$' "token da conta Ryze"
+  [[ -n "$RYZETOK" ]] && perguntar_whatsapp_dono
 
   say ""
   say "     ${BOLD}Telegram${C0} ${DIM}— opcional · bots e alertas de aplicações futuras${C0}"
@@ -731,6 +759,7 @@ questionario(){
   say "       ${DIM}e-mail ·····${C0} ${LE_EMAIL}"
   m="${DIM}pulado${C0}"; [[ -n "$CFTOK" ]] && m="informado ${DIM}(DNS automático)${C0}"; say "       ${DIM}cloudflare ·${C0} ${m}"
   m="${DIM}pulado${C0}"; [[ -n "$CLTOK" ]] && m="informado"; say "       ${DIM}claude ·····${C0} ${m}"
+  if [[ "$CLTOK" == sk-ant-oat* ]]; then m="senha automática ${DIM}(mostro no fim)${C0}"; [[ -n "$MASTER_PW" ]] && m="senha definida por você"; say "       ${DIM}master ·····${C0} ${m}"; fi
   m="${DIM}pulado${C0}"; [[ -n "$OAKEY" ]] && m="informado";  say "       ${DIM}openai ·····${C0} ${m}"
   m="${DIM}pulado${C0}"; [[ -n "$TGTOK" ]] && m="informado";  say "       ${DIM}telegram ···${C0} ${m}"
   m="${DIM}login por link${C0}"; [[ -n "$TSKEY" ]] && m="informado"; say "       ${DIM}tailscale ··${C0} ${m}"
@@ -1502,6 +1531,46 @@ HOMEYML
 # ── chat Claude: só sobe se o aluno deu uma API KEY (sk-ant-api) ──────────────
 # Fonte baixada do repo e construída aqui (sem Docker Hub). Atrás da tailnet,
 # HTTPS por DNS-01 (chat.DOMÍNIO → IP tailnet). A chave vira Docker secret.
+# ── a PORTA: Claude Code do HOST a serviço do chat (conversa com a VPS) ─────────
+# Mesmo desenho da porta que roda em produção no Motobot: quem pede só escreve um
+# arquivo em /opt/porta/entrada; o serviço systemd (root) roda o `claude -p` no host,
+# sessão por conversa, modo LEITURA por padrão e MASTER (senha + código) por 3 h.
+instalar_porta(){
+  command -v claude >/dev/null 2>&1 || { warn "porta pulada — o Claude Code não está instalado no host"; return 0; }
+  local _f _ok=1
+  mkdir -p "${D}/opt/porta/entrada" "${D}/opt/porta/saida" "${D}/opt/porta/uploads"
+  for _f in porta.py auth.py senha.py guarda-leitura.py settings-leitura.json motobase-porta.service; do
+    $CURL "${RAW_BASE}/porta/${_f}" -o "${D}/opt/porta/${_f}" 2>/dev/null || _ok=0
+  done
+  [[ $_ok -eq 1 ]] || { warn "não consegui baixar a porta — o chat sobe só como assistente; depois: motobase chat"; return 0; }
+  chmod 700 "${D}/opt/porta"; chmod +x "${D}/opt/porta/porta.py" "${D}/opt/porta/guarda-leitura.py" "${D}/opt/porta/senha.py"
+  [[ -s "${D}/opt/porta/estado.json" ]] || printf '{"total_ate":0,"sessoes":[],"modelo":"sonnet","esforco":"medium"}' > "${D}/opt/porta/estado.json"
+  chmod 600 "${D}/opt/porta/estado.json"
+  mkdir -p "${D}/etc/motobase"; printf 'PROJ_NAME=%s\n' "$PROJ_NAME" > "${D}/etc/motobase/porta.env"
+  if [[ "$DRY" == "--dry-run" ]]; then
+    say "       ${DIM}[dry-run] instalaria a porta (systemd motobase-porta) e gravaria a senha mestra${C0}"; return 0
+  fi
+  # senha mestra: só define se ainda não existe (rodar de novo NÃO troca a senha do dono),
+  # a menos que ele tenha digitado uma nova agora
+  if ! python3 -c "import sys;sys.path.insert(0,'/opt/porta');import auth;sys.exit(0 if auth.tem_senha() else 1)" 2>/dev/null; then
+    [[ -n "$MASTER_PW" ]] || { MASTER_PW="$(pw)"; MASTER_PW_GERADA=1; }
+    python3 /opt/porta/senha.py "$MASTER_PW" >/dev/null 2>&1 && sub "senha mestra gravada ${DIM}(scrypt em /opt/porta/auth.json — nunca em texto)${C0}" \
+      || warn "não consegui gravar a senha mestra — depois: motobase senha"
+  elif [[ -n "$MASTER_PW" ]]; then
+    python3 /opt/porta/senha.py "$MASTER_PW" >/dev/null 2>&1 && sub "senha mestra atualizada"
+  fi
+  cp /opt/porta/motobase-porta.service /etc/systemd/system/motobase-porta.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable motobase-porta >/dev/null 2>&1 || true
+  systemctl restart motobase-porta >/dev/null 2>&1 || true   # código novo → processo novo
+  sleep 1
+  if systemctl is-active --quiet motobase-porta; then
+    ok "Porta da VPS no ar ${DIM}(systemd motobase-porta · o Claude Code do host a serviço do chat)${C0}"
+  else
+    warn "a porta não subiu — veja: journalctl -u motobase-porta -n 30"
+  fi
+}
+
 instalar_claude_chat(){
   ETAPA="chat Claude"
   # o chat roda o Claude Code por baixo (plano Max) — precisa do SETUP-TOKEN (sk-ant-oat),
@@ -1525,7 +1594,7 @@ instalar_claude_chat(){
   # fonte do repo → build local
   mkdir -p "${D}/opt/claude-chat/public"
   local chat_ok=1
-  for f in package.json server.js Dockerfile .dockerignore chat-settings.json; do
+  for f in package.json server.js Dockerfile .dockerignore chat-settings.json auth.js identidade.js canal-2fa.js porta-cliente.js; do
     $CURL "${RAW_BASE}/apps/claude-chat/${f}" -o "${D}/opt/claude-chat/${f}" 2>/dev/null || chat_ok=0
   done
   $CURL "${RAW_BASE}/apps/claude-chat/public/index.html" -o "${D}/opt/claude-chat/public/index.html" 2>/dev/null || chat_ok=0
@@ -1538,8 +1607,29 @@ instalar_claude_chat(){
     return 0
   fi
 
+  # a porta (Claude Code do host) — é ela que dá ao chat a "conversa com a VPS"
+  instalar_porta
+
+  # identidade e canais do chat: dono = conta Tailscale desta VPS; código do master por
+  # WhatsApp (Ryze) se houver, senão Telegram, senão arquivo (motobase codigo)
+  local owner_login="" sock_line="" sec_lines="" sec_defs="" wa_inst=""
+  owner_login=$(tailscale status --json 2>/dev/null | jq -r '.User[(.Self.UserID|tostring)].LoginName // empty' 2>/dev/null || true)
+  [[ -S /var/run/tailscale/tailscaled.sock ]] && sock_line="      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro"
+  if [[ -n "${RYZETOK:-}" && "$DRY" != "--dry-run" ]] && ! docker secret inspect ryze_account_token >/dev/null 2>&1; then
+    printf '%s' "$RYZETOK" | docker secret create ryze_account_token - >/dev/null 2>&1 || true
+  fi
+  if docker secret inspect ryze_account_token >/dev/null 2>&1; then
+    sec_lines="${sec_lines}      - ryze_account_token"$'\n'; sec_defs="${sec_defs}  ryze_account_token: { external: true }"$'\n'
+    wa_inst=$(printf '%s' "${SLUG}bot" | tr -cd '[:alnum:]')
+  fi
+  if docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1; then
+    sec_lines="${sec_lines}      - { source: ${SLUG}_tg_token, target: tg_token }"$'\n'; sec_defs="${sec_defs}  ${SLUG}_tg_token: { external: true }"$'\n'
+  fi
+  mkdir -p "${D}/etc/motobase"
+  printf 'DONO_WHATSAPP=%s\nOWNER_LOGIN=%s\n' "${DONO_WHATSAPP:-}" "$owner_login" > "${D}/etc/motobase/chat.env"; chmod 600 "${D}/etc/motobase/chat.env"
+
   if [[ "$DRY" == "--dry-run" ]]; then
-    say "       ${DIM}[dry-run] construiria motobase/claude-chat:local e subiria a stack chat${C0}"
+    say "       ${DIM}[dry-run] construiria motobase/claude-chat:local e subiria a stack chat (dono: ${owner_login:-?} · porta + tailscale montados)${C0}"
     ok "chat Claude: ${BOLD}https://chat.${BASE_DOMAIN}${C0} ${DIM}(simulação)${C0}"
     return 0
   fi
@@ -1560,8 +1650,17 @@ services:
     environment:
       - MODEL=sonnet
       - APP_TITLE=Claude
-    secrets: [claude_oauth_token]
-    volumes: [claude_chat_data:/data]
+      - "PROJ_NAME=${PROJ_NAME}"
+      - OWNER_LOGIN=${owner_login}
+      - DONO_WHATSAPP=${DONO_WHATSAPP:-}
+      - WA_INST=${wa_inst}
+      - PORTA_BASE=/opt/porta
+    secrets:
+      - claude_oauth_token
+${sec_lines}    volumes:
+      - claude_chat_data:/data
+      - /opt/porta:/opt/porta
+${sock_line}
     networks: [web]
     deploy:
       placement: { constraints: [node.role == manager] }
@@ -1574,7 +1673,7 @@ services:
         - traefik.http.services.chat.loadbalancer.server.port=3000
 secrets:
   claude_oauth_token: { external: true }
-volumes:
+${sec_defs}volumes:
   claude_chat_data:
 networks:
   web: { external: true }
@@ -1582,7 +1681,8 @@ CHATYML
   RUN_ROTULO="subindo o chat Claude"
   run "docker stack deploy --detach=true -c /opt/claude-chat/chat.yml chat" || { warn "deploy do chat falhou — a fundação segue"; return 0; }
   ok "Chat Claude no ar: ${BOLD}https://chat.${BASE_DOMAIN}${C0}"
-  sub "só abre com o Tailscale ligado · seletor Opus/Sonnet/Haiku/Fable · custo por resposta"
+  sub "só abre com o Tailscale ligado · cada pessoa da tailnet tem as suas conversas (identidade pelo Tailscale)"
+  sub "você (dono) tem a ${BOLD}conversa com a VPS${C0}: leitura livre; ${BOLD}Liberar master${C0} = senha mestra + código → opera tudo por 3 h"
   cred ""; cred "Chat Claude (só-tailnet): https://chat.${BASE_DOMAIN}"
 }
 
@@ -1775,6 +1875,27 @@ antes de criar qualquer coisa.
   \`tailnet-only@file\` + priority 2000 (exemplo comentado no app.yml).
 - Backup: pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14d). Offsite: guard
   (bash <(curl -fsSL https://get.motobot.com.br/guard)).
+
+## Como criar um app novo nesta VPS (playbook — nesta ordem, de ponta a ponta)
+1. Pasta \`/opt/<app>/\` com o código, \`Dockerfile\` e \`stack.yml\`. Imagem local: \`docker build -t <app>:local /opt/<app>\`.
+2. Banco: schema próprio no Postgres da base — \`docker exec -i \$(docker ps -q -f name=${SLUG}_postgres | head -1) psql -U postgres -d ${SLUG} -c "create schema if not exists <app>;"\`.
+   DDL versionado em \`/opt/<app>/ddl.sql\` (aplicar com \`psql ... < ddl.sql\`). pgvector já está ativo: colunas \`vector(1536)\`, índice \`hnsw\`.
+3. Redis: host \`${SLUG}_redis\` porta 6379, senha em \`/run/secrets/${SLUG}_redis_password\` (monte o secret no serviço).
+   Redes: \`${SLUG}_internal\` (external) pra banco/redis + \`web\` (external) pro Traefik.
+4. Segredos do app: \`printf '%s' "<valor>" | docker secret create <app>_<nome> -\` → \`secrets:\` no stack → ler \`/run/secrets/…\` no boot.
+5. \`stack.yml\` (Swarm) com labels do Traefik: \`traefik.enable=true\`, \`traefik.docker.network=web\`,
+   \`traefik.http.routers.<app>.rule=Host(\\\`<app>.${BASE_DOMAIN}\\\`)\`, \`entrypoints=websecure\`, \`tls.certresolver=$(cert_resolver_padrao)\`,
+   \`traefik.http.services.<app>.loadbalancer.server.port=<porta>\`. Área privada: \`middlewares=tailnet-only@file\` + \`priority=2000\`.
+6. DNS: registro A \`<app>.${BASE_DOMAIN}\` → IP público ${IP} (ou o IP tailnet ${TSIP:-<tailnet>} se for só-tailnet), proxy DESLIGADO (nuvem cinza). Token: seção Cloudflare abaixo.
+7. Deploy: \`docker stack deploy --detach=true -c /opt/<app>/stack.yml <app>\`; conferir \`docker service ls\` (1/1) e
+   \`curl -sk -H "Host: <app>.${BASE_DOMAIN}" https://127.0.0.1/\` respondendo. Certificado leva até 2 min.
+8. Versionar (\`git init\` + \`gh repo create <app> --private\`) e commitar. Reportar o resultado real ao dono.
+
+## A porta (chat "Conversa com a VPS")
+- Você também atende pelo chat (chat.${BASE_DOMAIN}) via \`/opt/porta\` (serviço \`motobase-porta\`): sessão por conversa, modo LEITURA
+  por padrão (Write/Edit negados, Bash filtrado pelo guarda) e modo MASTER por 3 h após senha mestra + código.
+- Negado por permissão = diga o que faria e peça o "Liberar master" no chat. Nunca contorne o guarda.
+- Comandos do dono no host: \`motobase senha\` (troca a senha mestra) · \`motobase master [fechar]\` · \`motobase codigo\` · \`motobase porta\`.
 
 ## Versionamento (fazer no PRIMEIRO código que existir)
 - git e GitHub CLI já instalados. NÃO existe token guardado aqui — autenticar com
@@ -1973,6 +2094,10 @@ prova_real(){
   if docker service inspect chat_chat >/dev/null 2>&1; then
     local cc; cc=$(_smoke_hit "chat.${BASE_DOMAIN}" "/")
     [[ "$cc" =~ ^(200|304|401)$ ]] && ok "Chat responde de verdade ${DIM}(HTTP $cc · middleware ok)${C0}" || { warn "Chat NÃO responde ${DIM}(HTTP $cc — rota/middleware)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+    if [[ -x /opt/porta/porta.py ]]; then
+      if systemctl is-active --quiet motobase-porta; then ok "Porta da VPS ativa ${DIM}(conversa com a VPS + modo master)${C0}"
+      else warn "Porta da VPS parada"; sub "journalctl -u motobase-porta -n 30"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); fi
+    fi
   fi
   if docker service inspect wabot_wabot >/dev/null 2>&1; then
     local pc; pc=$(_smoke_hit "bot-admin.${BASE_DOMAIN}" "/")
@@ -2022,6 +2147,12 @@ gerar_acessos_txt(){
     printf '  Portainer ........ http://%s:9000      (gestao dos containers)\n' "${TSIP:-<ip-tailnet>}"
     printf '  Beszel ........... http://%s:8090      (saude da VPS)\n' "${TSIP:-<ip-tailnet>}"
     [[ -n "$chat_on" ]] && printf '  Chat Claude ...... https://chat.%s\n' "$BASE_DOMAIN"
+    if [[ -n "$chat_on" && -x /opt/porta/porta.py ]]; then
+      local _canal="arquivo na VPS (motobase codigo)"
+      docker secret inspect "${SLUG}_tg_token" >/dev/null 2>&1 && _canal="Telegram (bot dos alertas)"
+      [[ -n "${DONO_WHATSAPP:-}" ]] && docker secret inspect ryze_account_token >/dev/null 2>&1 && _canal="WhatsApp final ${DONO_WHATSAPP: -4}"
+      printf '  Conversa com a VPS  no chat, so o dono (sua conta Tailscale). Modo master = senha mestra + codigo por %s\n' "$_canal"
+    fi
     [[ -n "$bot_on" ]]  && printf '  Parear o bot ..... https://bot-admin.%s   (escaneie o QR)\n' "$BASE_DOMAIN"
     echo
     echo "LOGINS (o comando 'motobase acessos' mostra as senhas):"
@@ -2029,6 +2160,7 @@ gerar_acessos_txt(){
     [[ -r "${D}/etc/motobase/beszel-admin.env" ]] && { # shellcheck disable=SC1090
       source "${D}/etc/motobase/beszel-admin.env"; printf "  Beszel:    e-mail '%s'\n" "${BESZEL_ADMIN_EMAIL:-}"; }
     [[ -n "$bot_on" ]] && echo "  Bot: pareie escaneando o QR (nao tem senha)"
+    [[ -x /opt/porta/porta.py ]] && echo "  Master do chat: a senha mestra (trocar: motobase senha · status: motobase master)"
     echo
     [[ -n "$tg_user" ]] && printf 'ALERTAS: mande /start pra t.me/%s uma vez — o watchdog avisa ali quando algo cair.\n' "$tg_user"
     echo "Dica: se um endereco der 'DNS nao encontrado', espere 1-2 min (propagacao) e recarregue."
@@ -2074,6 +2206,11 @@ resumo(){
     say "     ${BOLD}SENHAS${C0} ${DIM}(guarde num gerenciador de senhas)${C0}"
     [[ -n "$_pp" ]] && say "       Portainer  →  usuário ${BOLD}admin${C0}  ·  senha ${BOLD}${_pp}${C0}"
     [[ -n "$_bp" ]] && say "       Beszel     →  e-mail ${BOLD}${_be}${C0}  ·  senha ${BOLD}${_bp}${C0}"
+    if [[ -n "${MASTER_PW_GERADA:-}" ]]; then
+      say "       Master     →  senha mestra ${BOLD}${MASTER_PW}${C0}  ${DIM}(chat → Liberar master · NÃO fica gravada em texto: anote · trocar: motobase senha)${C0}"
+    elif [[ -x /opt/porta/porta.py ]]; then
+      say "       Master     →  a senha mestra que você definiu ${DIM}(trocar: motobase senha)${C0}"
+    fi
   fi
   say "       ${DIM}└ isto tudo de novo a qualquer hora: ${BOLD}motobase acessos${C0}"
   say ""
@@ -2112,6 +2249,21 @@ case "${1:-ajuda}" in
     ;;
   alertas)
     exec bash <(curl -fsSL https://get.motobot.com.br) --repair-watchdog
+    ;;
+  senha)
+    exec python3 /opt/porta/senha.py
+    ;;
+  codigo)
+    [[ -r /opt/porta/codigo-master.txt ]] && cat /opt/porta/codigo-master.txt || { echo "Nenhum código pendente — clique 'Liberar master' no chat primeiro." >&2; exit 1; }
+    ;;
+  master)
+    case "${2:-}" in
+      fechar) python3 -c 'import json;p="/opt/porta/estado.json";e=json.load(open(p));e["total_ate"]=0;json.dump(e,open(p,"w"));print("modo master fechado")' ;;
+      *) python3 -c 'import json,time;e=json.load(open("/opt/porta/estado.json"));f=e.get("total_ate",0)-time.time();print("MASTER aberto por mais %d min" % (f//60) if f>0 else "LEITURA (master fechado)")' 2>/dev/null || echo "porta não instalada (motobase chat)" ;;
+    esac
+    ;;
+  porta)
+    systemctl status motobase-porta --no-pager -n 20
     ;;
   acessos)
     [[ -r /etc/motobase/acessos.txt ]] && { cat /etc/motobase/acessos.txt; echo; echo "─── SENHAS ───"; }
@@ -2201,6 +2353,10 @@ Motobase — atalhos de acesso
   motobase chat              Adiciona/renova o chat Claude (cola o setup-token do Max)
   motobase bot               Adiciona/renova o bot de WhatsApp (token Ryze)
   motobase alertas           Ativa os alertas no Telegram (token do BotFather)
+  motobase senha             Define/troca a senha mestra do modo master do chat
+  motobase codigo            Mostra o código de 4 dígitos pendente (quando vai por arquivo)
+  motobase master [fechar]   Status da janela master (ou fecha na hora)
+  motobase porta             Status do serviço da porta (Claude Code do host)
   motobase preparar-ssh      Cria o usuário seguro mbadmin a partir da sua chave SSH
   motobase blindar-ssh       Desliga senha/root e libera SSH somente pela Tailnet (após testar mbadmin)
 HELP
@@ -2263,6 +2419,10 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   ask_tok CLTOK "Setup-token do Claude (sk-ant-oat)" '^sk-ant-oat' "sk-ant-oat01-…"
   [[ "$CLTOK" == sk-ant-oat* ]] || die "Isso não é um setup-token (tem que começar com sk-ant-oat). Gere com 'claude setup-token'."
   [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o chat precisa dos três."
+  # shellcheck disable=SC1091
+  [[ -r /etc/motobase/chat.env ]] && source /etc/motobase/chat.env
+  python3 -c "import sys;sys.path.insert(0,'/opt/porta');import auth;sys.exit(0 if auth.tem_senha() else 1)" 2>/dev/null || perguntar_senha_master
+  if docker secret inspect ryze_account_token >/dev/null 2>&1 && [[ -z "${DONO_WHATSAPP:-}" ]]; then perguntar_whatsapp_dono; fi
   cred(){ :; }
   # token NOVO tem que valer: rotaciona o secret (stack rm → secret rm → recria no instalar)
   if docker secret inspect claude_oauth_token >/dev/null 2>&1; then

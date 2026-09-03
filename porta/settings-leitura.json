@@ -1,0 +1,19 @@
+{
+  "_comentario": "Modo LEITURA da porta (sem 2FA). Carregado pelo porta.py via --settings quando a janela master NAO esta aberta. Write/Edit ficam negados e todo Bash passa pelo guarda-leitura.py, que recusa escrita, deploy e comando destrutivo. Com o master liberado no chat (senha + codigo) a porta roda sem este arquivo por 3 horas.",
+  "permissions": {
+    "deny": ["Write", "Edit", "NotebookEdit"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/porta/guarda-leitura.py"
+          }
+        ]
+      }
+    ]
+  }
+}
