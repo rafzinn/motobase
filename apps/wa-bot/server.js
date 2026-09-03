@@ -94,14 +94,16 @@ const $=s=>document.querySelector(s);let timer=null;
 async function status(){try{const s=await(await fetch('/status')).json();$('#inst').textContent=s.instance||'—';
 const st=s.state||'desconhecido';const conn=s.connected;
 $('#dot').className='dot '+(conn?'on':(st==='connecting'?'wait':''));
-$('#state').textContent=conn?('conectado'+(s.number?' · '+s.number:'')):st;
+$('#state').textContent=conn?('conectado'+(s.number?' · '+s.number:'')):(s.exists===false?'instância ainda não existe na Ryze — o bot cria no boot (docker service logs wabot_wabot)':st);
 $('#state').className='state'+(conn?' ok':'');
 if(conn){$('#qrbox').style.display='none';$('#code').style.display='none';$('#btn').textContent='Conectado ✓';$('#btn').disabled=true;if(timer)clearInterval(timer);}}catch(e){$('#state').textContent='erro ao consultar';}}
 $('#btn').onclick=async()=>{$('#btn').disabled=true;$('#btn').textContent='gerando…';
-try{const c=await(await fetch('/connect')).json();
+try{const r=await fetch('/connect');const c=await r.json();
 if(c.qrBase64){$('#qr').src=c.qrBase64;$('#qrbox').style.display='block';}
 if(c.pairingCode){$('#code').textContent=c.pairingCode;$('#code').style.display='block';}
-$('#btn').textContent='Gerar de novo';}catch(e){$('#btn').textContent='falhou — tentar de novo';}
+if(c.error){$('#state').textContent='falhou: '+c.error;$('#state').className='state';}
+else if(!c.qrBase64&&!c.pairingCode){$('#state').textContent='a Ryze não devolveu QR (estado: '+(c.state||'?')+'). A instância existe? Veja: docker service logs wabot_wabot';}
+$('#btn').textContent='Gerar de novo';}catch(e){$('#btn').textContent='falhou — tentar de novo';$('#state').textContent='sem resposta do bot: '+e.message;}
 $('#btn').disabled=false;if(!timer)timer=setInterval(status,3000);status();};
 status();timer=setInterval(status,4000);
 </script></body></html>`;
