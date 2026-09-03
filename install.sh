@@ -30,6 +30,8 @@ while [[ $# -gt 0 ]]; do
     --repair-beszel) ACTION="repair-beszel" ;;
     --reconcile) ACTION="reconcile" ;;
     --repair-chat) ACTION="repair-chat" ;;
+    --repair-bot) ACTION="repair-bot" ;;
+    --repair-watchdog) ACTION="repair-watchdog" ;;
     --site) ACTION="site" ;;
     --wordpress) ACTION="wordpress" ;;
     --help|-h) ACTION="help" ;;
@@ -180,9 +182,13 @@ load_state(){
     BASE_SLUG=$(docker service ls --format '{{.Name}}' 2>/dev/null | sed -n 's/_postgres$//p' | head -1 || true)
     BASE_SLUG="${BASE_SLUG:-motobase}"
     TAILSCALE_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
-    if docker network inspect web >/dev/null 2>&1; then
-      CERT_RESOLVER="le"
-    fi
+    CERT_RESOLVER="le"
+  fi
+  # ledns (DNS-01) só vale se o Traefik vivo tem esse resolver; senão HTTP-01 sempre funciona
+  if docker service inspect traefik_traefik --format '{{.Spec.TaskTemplate.ContainerSpec.Args}}' 2>/dev/null | grep -q 'certificatesresolvers\.ledns'; then
+    CERT_RESOLVER="ledns"
+  else
+    CERT_RESOLVER="le"
   fi
   # Instalações antigas guardavam o endereço de uma app em BASE_DOMAIN. O painel
   # Portainer sempre usa portainer.<domínio-base>, então ele recupera a raiz sem
@@ -446,10 +452,12 @@ services:
 networks:
   web: { external: true }
 EOF
-  run docker stack deploy --detach=true -c "/opt/projetos/${PROJECT_SLUG}/stack.yml" "$stack" >/dev/null
+  # DNS ANTES do deploy: o Traefik pede o certificado assim que o roteador aparece — se o
+  # A ainda não existe, a 1ª tentativa falha e o LE segura a próxima por minutos.
   token=$(cloudflare_token)
   cf_record "$PROJECT_DOMAIN" "$token"
   [[ "$USE_WWW" =~ ^[sS]$ ]] && cf_record "www.${PROJECT_DOMAIN}" "$token"
+  run docker stack deploy --detach=true -c "/opt/projetos/${PROJECT_SLUG}/stack.yml" "$stack" >/dev/null
   register_project "$PROJECT_SLUG" site "$PROJECT_DOMAIN" "$stack"
   setup_static_backup "$PROJECT_SLUG" "$dir"
 
@@ -548,10 +556,12 @@ volumes:
   db_data: {}
   redis_data: {}
 EOF
-  run docker stack deploy --detach=true -c "/opt/projetos/${PROJECT_SLUG}/stack.yml" "$stack" >/dev/null
+  # DNS ANTES do deploy: o Traefik pede o certificado assim que o roteador aparece — se o
+  # A ainda não existe, a 1ª tentativa falha e o LE segura a próxima por minutos.
   token=$(cloudflare_token)
   cf_record "$PROJECT_DOMAIN" "$token"
   [[ "$USE_WWW" =~ ^[sS]$ ]] && cf_record "www.${PROJECT_DOMAIN}" "$token"
+  run docker stack deploy --detach=true -c "/opt/projetos/${PROJECT_SLUG}/stack.yml" "$stack" >/dev/null
   register_project "$PROJECT_SLUG" wordpress "$PROJECT_DOMAIN" "$stack"
   setup_wordpress_backup "$PROJECT_SLUG" "$stack" "$db_secret" "$dir"
 
@@ -626,7 +636,6 @@ smoke_foundation(){
   docker network inspect web >/dev/null 2>&1 && ok "Rede pública web" || warn "Rede web ausente"
   service_check traefik_traefik "Traefik"
   service_check portainer_portainer "Portainer"
-  service_check portainer_agent "Portainer Agent"
   service_check beszel_hub "Beszel Hub"
   service_check beszel_agent "Beszel Agent"
   curl -fsS --max-time 5 http://127.0.0.1:8090/api/health >/dev/null 2>&1 \
@@ -682,6 +691,8 @@ main_menu(){
     say "  ${ORANGE}[3]${C0} Meus projetos           ${ORANGE}[4]${C0} Saúde da VPS"
     say "  ${ORANGE}[5]${C0} Reconciliar acessos ${DIM}(corrige links/DNS pro IP atual)${C0}"
     say "  ${ORANGE}[6]${C0} Adicionar o chat Claude ${DIM}(cola o setup-token do plano Max)${C0}"
+    say "  ${ORANGE}[7]${C0} Adicionar o bot de WhatsApp ${DIM}(token Ryze + chave OpenAI)${C0}"
+    say "  ${ORANGE}[8]${C0} Ativar alertas no Telegram ${DIM}(token do BotFather)${C0}"
     say "  ${ORANGE}[0]${C0} Sair\n"
     ask choice "O que você quer fazer"
     say ""
@@ -692,6 +703,8 @@ main_menu(){
       4) smoke_foundation; break ;;
       5) bash "$(motor)" --reconcile; break ;;
       6) bash "$(motor)" --repair-chat; break ;;
+      7) bash "$(motor)" --repair-bot; break ;;
+      8) bash "$(motor)" --repair-watchdog; break ;;
       0) return 0 ;;
       *) warn "Escolha uma opção válida."; sleep 1 ;;
     esac
@@ -713,6 +726,8 @@ main(){
     repair-beszel) bash "$(motor)" --repair-beszel ;;
     reconcile) bash "$(motor)" --reconcile ;;
     repair-chat) bash "$(motor)" --repair-chat ;;
+    repair-bot) bash "$(motor)" --repair-bot ;;
+    repair-watchdog) bash "$(motor)" --repair-watchdog ;;
     site) create_static_site ;;
     wordpress) create_wordpress ;;
     *) main_menu ;;

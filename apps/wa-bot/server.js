@@ -147,20 +147,31 @@ app.post('/webhook/wa', async (req, res) => {
   } catch (e) { console.error('[wa-bot] processamento:', e.message); }
 });
 
-// no boot: garante que a instância existe e o webhook aponta pra cá (idempotente)
-async function provisionar() {
+// no boot: garante que a instância existe e o webhook aponta pra cá (idempotente).
+// Com RETRY: a Ryze pode estar lenta/instável nos primeiros segundos, e o DNS do
+// webhook (bot.<domínio>) pode ainda não ter propagado — tentar uma vez só deixava
+// o bot "no ar" sem receber mensagem nenhuma.
+async function provisionar(tentativa = 1) {
   if (!INST || !process.env.RYZE_ACCOUNT_TOKEN) return;
+  const MAX = 15, espera = Math.min(60000, 3000 * Math.pow(2, tentativa - 1));
   try {
     const st = await wa.status(INST, null);
     if (!st.exists) {
       const c = await wa.createInstance(INST);
       console.log('[wa-bot] instância criada:', INST, c.ok ? 'ok' : ('falhou ' + c.status));
+      if (!c.ok) throw new Error('createInstance ' + c.status);
     }
     if (WEBHOOK_URL) {
       const r = await wa.setWebhook(INST, null, WEBHOOK_URL, ['message.exchange', 'instance.state'], WH_TOKEN || undefined);
       console.log('[wa-bot] webhook →', WEBHOOK_URL, r.ok ? 'ok' : ('falhou ' + r.status));
+      if (!r.ok) throw new Error('setWebhook ' + r.status);
     }
-  } catch (e) { console.warn('[wa-bot] provisionamento adiado:', e.message); }
+    console.log('[wa-bot] provisionamento concluído (tentativa ' + tentativa + ')');
+  } catch (e) {
+    if (tentativa >= MAX) { console.error('[wa-bot] provisionamento DESISTIU após', MAX, 'tentativas:', e.message); return; }
+    console.warn('[wa-bot] provisionamento adiado (' + e.message + ') — tentando de novo em ' + Math.round(espera / 1000) + 's');
+    setTimeout(() => provisionar(tentativa + 1), espera);
+  }
 }
 
 app.listen(PORT, () => console.log(`[wa-bot] na porta ${PORT} · instância ${INST || '(defina RYZE_INSTANCE)'} · modelo ${MODEL} · chave ${API_KEY ? 'ok' : 'AUSENTE'}`));

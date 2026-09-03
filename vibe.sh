@@ -122,7 +122,7 @@ reconciliar(){
   source /etc/motobase/base.env
   BASE_DOMAIN="${BASE_DOMAIN:-}"; SLUG="${BASE_SLUG:-}"; PROJ_NAME="${BASE_NAME:-$SLUG}"
   CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
-  IP=$(curl -fsS -4 --max-time 8 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  IP=$(ip_publico)
   TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
   say ""; say "  ${CHIP} RECONCILIAR ${C0} ${DIM}corrige os endereços pro IP atual desta VPS${C0}"; say ""
   ok "IP público ${BOLD}${IP}${C0} · tailnet ${BOLD}${TSIP:-—}${C0}"
@@ -136,6 +136,13 @@ reconciliar(){
   cf_dns_record "${BASE_DOMAIN}" "$IP" "público · home"
   cf_dns_record "www.${BASE_DOMAIN}" "$IP" "público · www"
   docker service inspect wabot_wabot >/dev/null 2>&1 && cf_dns_record "bot.${BASE_DOMAIN}" "$IP" "público · webhook do bot"
+  # projetos criados pelo gerenciador (site/WordPress) também seguem o IP novo
+  if [[ -s /etc/motobase/projects.tsv ]]; then
+    while IFS=$'\t' read -r _ps _pt _pd _pr; do
+      [[ -n "$_pd" ]] && { cf_dns_record "$_pd" "$IP" "público · projeto ${_ps}"; cf_dns_record "www.${_pd}" "$IP" "público · www do projeto ${_ps}"; }
+    done < /etc/motobase/projects.tsv
+  fi
+  checar_delegacao_ns "${BASE_DOMAIN}"
   # privados → TSIP
   if [[ -n "$TSIP" ]]; then
     cf_dns_record "portainer.${BASE_DOMAIN}" "$TSIP" "privado · Portainer"
@@ -147,6 +154,33 @@ reconciliar(){
   verificar_dns "${BASE_DOMAIN}" "$IP"
   [[ -n "$TSIP" ]] && verificar_dns "portainer.${BASE_DOMAIN}" "$TSIP"
   say ""; ok "Reconciliação concluída. Se algo ainda não abrir, aguarde 1-2 min (propagação)."
+}
+
+# IP público confiável: 2 provedores + recusa IP privado/CGNAT (VPS atrás de NAT
+# devolveria 10.x pelo hostname -I e o DNS público ficaria errado).
+ip_publico(){
+  local ip u
+  for u in https://ifconfig.me https://api.ipify.org; do
+    ip=$(curl -fsS -4 --max-time 6 "$u" 2>/dev/null | tr -dc '0-9.'); [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break; ip=""
+  done
+  [[ -z "$ip" ]] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  case "$ip" in 10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|100.[6-9]*|100.1[0-2]*|127.*) warn "IP público não confiável (${ip}) — confira o A do DNS depois";; esac
+  printf '%s' "$ip"
+}
+# resolver de certificado: DNS-01 (ledns) só existe se o token CF foi dado; senão HTTP-01
+cert_resolver_padrao(){ [[ -n "${CFTOK:-}" ]] && printf 'ledns' || printf 'le'; }
+# Delegação DUPLA (domínio apontando pra 2 zonas Cloudflare) foi a causa raiz de horas de
+# HTTPS "às vezes sim, às vezes não" em 02/09. O instalador não conserta (é no registrador),
+# mas AVISA com os nameservers exatos que devem ficar.
+checar_delegacao_ns(){ # $1=domínio
+  { [[ -z "${CFTOK:-}" ]] || ! command -v dig >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; } && return 0
+  local esperado delegado
+  esperado=$(curl -fsS -H "Authorization: Bearer ${CFTOK}" "https://api.cloudflare.com/client/v4/zones?name=$1" 2>/dev/null | jq -r '.result[0].name_servers[]?' 2>/dev/null | sort -u || true)
+  delegado=$(dig +trace +nodnssec +tries=2 +time=3 NS "$1" 2>/dev/null | awk -v d="$1." '$1==d && $4=="NS"{print $5}' | sed 's/\.$//' | sort -u || true)
+  [[ -n "$esperado" && -n "$delegado" && "$delegado" != "$esperado" ]] || return 0
+  warn "${BOLD}$1 está delegado a MAIS nameservers do que os da sua zona Cloudflare${C0} — o HTTPS sai só às vezes (ou nunca)"
+  sub "no REGISTRADOR do domínio, deixe SÓ: $(echo $esperado | tr '\n' ' ')"
+  sub "hoje o registro entrega: $(echo $delegado | tr '\n' ' ')  ← apague os que sobram"
 }
 
 # espera o apt/dpkg liberar (VPS nova roda auto-update no 1º boot)
@@ -294,7 +328,7 @@ on_err(){
 }
 trap on_err ERR
 
-DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; REPAIR_CHAT=""; SMOKE_FALHAS=0
+DRY=""; SEED=""; BASE_ONLY=""; REPAIR_BESZEL=""; RECONCILE=""; REPAIR_CHAT=""; REPAIR_BOT=""; REPAIR_WATCHDOG=""; SMOKE_FALHAS=0
 while [[ $# -gt 0 ]]; do case "$1" in
   --dry-run) DRY="--dry-run" ;;
   --seed) SEED="${2:-}"; shift ;;
@@ -302,6 +336,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --repair-beszel) REPAIR_BESZEL="1" ;;
   --reconcile) RECONCILE="1" ;;
   --repair-chat) REPAIR_CHAT="1" ;;
+  --repair-bot) REPAIR_BOT="1" ;;
+  --repair-watchdog) REPAIR_WATCHDOG="1" ;;
   *) warn "argumento desconhecido: $1" ;;
 esac; shift; done
 
@@ -409,7 +445,7 @@ preflight(){
   local disk_gb; disk_gb=$(df --output=avail -BG / 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)
   [[ "$disk_gb" -gt 0 && "$disk_gb" -lt 15 ]] && warn "Só ${disk_gb}GB livres no disco — o mínimo confortável é 20GB." || true
 
-  IP=$(curl -fsS -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  IP=$(ip_publico)
   ok "Servidor ${BOLD}$(hostname)${C0} — IP público ${BOLD}${IP}${C0}"
   ok "Sistema ${BOLD}${PRETTY_NAME:-Linux}${C0} · ${mem_mb}MB RAM · ${disk_gb}GB livres"
 
@@ -497,7 +533,7 @@ cf_dns_record(){
   # zona (SEM status=active: pega zona recém-adicionada/pending também)
   local d="$record_domain" zid=""
   while [[ "$d" == *.* ]]; do
-    zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}" 2>/dev/null | grep -oP '"id":"\K[a-f0-9]{32}' | head -1 || true)
+    zid=$(curl -fsS -H "$hdr" "${api}/zones?name=${d}" 2>/dev/null | grep -oP '"result":\[\{"id":"\K[a-f0-9]{32}' | head -1 || true)
     [[ -n "$zid" ]] && break
     d="${d#*.}"
   done
@@ -615,7 +651,7 @@ questionario(){
   say "     ${BOLD}Painel de saúde (Beszel)${C0} ${DIM}— senha de acesso${C0}"
   sub "Enter = gero uma forte automática (fica em 'motobase acessos')"
   while true; do
-    read_masked "     ${LRJ}?${C0} Senha do painel Beszel (mín. 10, ou Enter p/ automática): "
+    read_masked "Senha do painel Beszel (mín. 10, ou Enter p/ automática)"
     BESZEL_ADMIN_PW="${REPLY//$'\r'/}"; BESZEL_ADMIN_PW="${BESZEL_ADMIN_PW// /}"
     [[ -z "$BESZEL_ADMIN_PW" ]] && { info "ok — senha automática"; break; }
     [[ ${#BESZEL_ADMIN_PW} -ge 10 ]] && { ok "senha do Beszel definida por você"; break; }
@@ -718,6 +754,9 @@ questionario(){
     mkdir -p "${D}/root/.config/cloudflare"; chmod 700 "${D}/root/.config/cloudflare"
     printf '%s\n' "$CFTOK" > "${D}/root/.config/cloudflare/token"
     chmod 600 "${D}/root/.config/cloudflare/token"
+    # cópia root-only que 'motobase reconciliar' e os --repair-* leem — gravada AQUI,
+    # antes de qualquer etapa que possa abortar (não só no registro final)
+    mkdir -p "${D}/etc/motobase"; printf '%s' "$CFTOK" > "${D}/etc/motobase/cloudflare.token"; chmod 600 "${D}/etc/motobase/cloudflare.token"
     cred "Cloudflare: token da API em /root/.config/cloudflare/token (FONTE ÚNICA — não copiar)"
   fi
   ok "Questionário completo — ${DIM}daqui pra frente é comigo${C0}"
@@ -730,7 +769,7 @@ docker_swarm(){
   if ! command -v jq >/dev/null || ! command -v openssl >/dev/null; then
     info "instalando utilitários básicos…"
     RUN_ROTULO="instalando utilitários base"
-    run "$APT update && $APT install ca-certificates curl jq openssl"
+    run "$APT update && $APT install ca-certificates curl jq openssl dnsutils"
   fi
   # Segurança do host desde o primeiro dia. A blindagem definitiva do SSH fica
   # para depois que o aluno validar a entrada privada pela Tailnet.
@@ -783,8 +822,12 @@ traefik_stack(){
   ETAPA="Traefik (HTTPS)"
   etapa "3/${TOTAL_STEPS}" "TRAEFIK" "o porteiro: HTTPS automático pra todo serviço novo"
   if docker service ls --format '{{.Name}}' 2>/dev/null | grep -q '^traefik_traefik$'; then
-    ok "Traefik já existe neste Swarm — mantendo o que está no ar"
-    return
+    local targs; targs=$(docker service inspect traefik_traefik --format '{{.Spec.TaskTemplate.ContainerSpec.Args}}' 2>/dev/null || true)
+    if [[ "$targs" == *providers.file.directory* ]] && { [[ -z "${CFTOK:-}" ]] || [[ "$targs" == *certificatesresolvers.ledns* ]]; }; then
+      ok "Traefik já existe neste Swarm e está atualizado — mantendo o que está no ar"
+      return
+    fi
+    info "Traefik existe mas de uma versão anterior (sem file provider/ledns) — atualizando o stack…"
   fi
   mkdir -p "${D}/opt/traefik" && touch "${D}/opt/traefik/acme.json" && chmod 600 "${D}/opt/traefik/acme.json"
   # Middleware tailnet-only via FILE PROVIDER (não via labels do Traefik — isso dava
@@ -845,6 +888,7 @@ services:
 networks:
   web: { external: true }
 EOF
+  chmod 600 "${D}/opt/traefik/stack.yml" 2>/dev/null || true
   RUN_ROTULO="subindo o Traefik (HTTPS)"
   run "docker stack deploy --detach=true -c /opt/traefik/stack.yml traefik"
   ok "Traefik no ar"
@@ -998,7 +1042,7 @@ services:
         # - traefik.http.routers.${SLUG}-adm.rule=Host(\`${APP_DOMAIN}\`) && PathPrefix(\`/admin\`)
         # - traefik.http.routers.${SLUG}-adm.entrypoints=websecure
         # - traefik.http.routers.${SLUG}-adm.tls.certresolver=le
-        # - traefik.http.routers.${SLUG}-adm.middlewares=tailnet-only
+        # - traefik.http.routers.${SLUG}-adm.middlewares=tailnet-only@file
         # - traefik.http.routers.${SLUG}-adm.priority=2000
         # - traefik.http.routers.${SLUG}-adm.service=${SLUG}
 networks:
@@ -1100,8 +1144,8 @@ EOF
     RUN_ROTULO="subindo o Portainer"
     run "docker stack deploy --detach=true -c /opt/${SLUG}/portainer.yml portainer"
     info "verificando o login do Portainer (prova real)…"
-    if ! portainer_login_esperar "$PORTAINER_PW"; then
-      warn "Portainer subiu mas o login não respondeu — refazendo do zero (zumbi ou volume sujo)…"
+    if ! portainer_login_esperar "$PORTAINER_PW" || [[ "$(docker ps --filter name=portainer_portainer -q | wc -l)" != 1 ]]; then
+      warn "Portainer subiu mas o login não respondeu (ou há mais de 1 container) — refazendo do zero…"
       portainer_limpar
       portainer_secret_garantir "$PORTAINER_PW"
       RUN_ROTULO="subindo o Portainer (2ª vez, limpo)"
@@ -1160,7 +1204,7 @@ EOF
   cred "  senha: ${PORTAINER_PW:-veja motobase acessos}"
   cred "IP tailnet do servidor: ${TSIP}"
 
-  beszel_stack
+  beszel_stack || true
   home_stack
   instalar_claude_chat
   instalar_wa_bot
@@ -1172,7 +1216,10 @@ beszel_stack(){
   local version="0.18.8" dir="${D}/opt/${SLUG}/beszel"
   local admin_file="${D}/etc/motobase/beszel-admin.env"
   local token_state="${D}/etc/motobase/beszel-agent-token-mode"
-  local admin_email="${LE_EMAIL}" admin_password="" auth="" key="" token=""
+  local admin_email="${LE_EMAIL:-}" admin_password="" auth="" key="" token=""
+  # e-mail nunca vazio: cai pro do Traefik (sempre existe antes do Beszel) e depois pro domínio
+  [[ "$admin_email" == *@* ]] || admin_email=$(sed -n 's/.*certificatesresolvers\.le\.acme\.email=//p' "${D}/opt/traefik/stack.yml" 2>/dev/null | head -1 || true)
+  [[ "$admin_email" == *@* ]] || admin_email="admin@${BASE_DOMAIN:-motobase.local}"
   mkdir -p "$dir" "${D}/etc/motobase"
 
   if [[ -r "$admin_file" ]]; then
@@ -1210,6 +1257,8 @@ beszel_stack(){
   # conta existe, o deploy final remove a senha do serviço e do stack.yml.
   if ! docker service inspect beszel_hub >/dev/null 2>&1; then
     local init_stack; init_stack=$(mktemp)
+    # senha vai entre aspas simples no YAML: escapa ' e $ (o compose interpola $)
+    local admin_password_yaml="${admin_password//\$/\$\$}"; admin_password_yaml="${admin_password_yaml//\'/\'\'}"
     cat > "$init_stack" <<EOF
 version: "3.8"
 services:
@@ -1217,8 +1266,8 @@ services:
     image: henrygd/beszel:${version}
     environment:
       APP_URL: ${BESZEL_URL}
-      USER_EMAIL: ${admin_email}
-      USER_PASSWORD: ${admin_password}
+      USER_EMAIL: '${admin_email}'
+      USER_PASSWORD: '${admin_password_yaml}'
       CHECK_UPDATES: "false"
     volumes: [hub_data:/beszel_data]
     ports:
@@ -1261,7 +1310,7 @@ EOF
     || ! docker secret inspect beszel_agent_token >/dev/null 2>&1; then
     _bz_auth(){ curl -fsS --max-time 10 -H 'Content-Type: application/json' \
       --data "$(jq -nc --arg identity "$admin_email" --arg password "$admin_password" '{identity:$identity,password:$password}')" \
-      "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty'; }
+      "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' || true; }
     auth=$(_bz_auth)
     if [[ -z "$auth" ]]; then
       # volume remendado: o env USER_* é ignorado quando já existe conta. Força a senha
@@ -1278,10 +1327,10 @@ EOF
           local sutok urid ubody
           sutok=$(curl -fsS --max-time 10 -H 'Content-Type: application/json' \
             --data "$(jq -nc --arg i "$admin_email" --arg p "$admin_password" '{identity:$i,password:$p}')" \
-            http://127.0.0.1:8090/api/collections/_superusers/auth-with-password 2>/dev/null | jq -r '.token // empty')
+            http://127.0.0.1:8090/api/collections/_superusers/auth-with-password 2>/dev/null | jq -r '.token // empty' || true)
           if [[ -n "$sutok" ]]; then
-            ubody=$(jq -nc --arg e "$admin_email" --arg p "$admin_password" '{email:$e,password:$p,passwordConfirm:$p,verified:true}')
-            urid=$(curl -fsS --max-time 10 -H "Authorization: $sutok" "http://127.0.0.1:8090/api/collections/users/records?perPage=1" 2>/dev/null | jq -r '.items[0].id // empty')
+            ubody=$(jq -nc --arg e "$admin_email" --arg p "$admin_password" '{email:$e,password:$p,passwordConfirm:$p,verified:true,role:"admin"}')
+            urid=$(curl -fsS --max-time 10 -H "Authorization: $sutok" "http://127.0.0.1:8090/api/collections/users/records?filter=$(printf "(email='%s')" "$admin_email" | jq -sRr @uri)" 2>/dev/null | jq -r '.items[0].id // empty' || true)
             if [[ -n "$urid" ]]; then
               curl -fsS --max-time 10 -X PATCH -H "Authorization: $sutok" -H 'Content-Type: application/json' --data "$ubody" "http://127.0.0.1:8090/api/collections/users/records/$urid" >/dev/null 2>&1 || true
             else
@@ -1399,6 +1448,7 @@ home_stack(){
   if [[ -n "${CFTOK:-}" ]]; then
     cf_dns_record "$BASE_DOMAIN" "$IP" "público · home de boas-vindas"
     cf_dns_record "www.${BASE_DOMAIN}" "$IP" "público · alias www da home"
+  checar_delegacao_ns "${BASE_DOMAIN}"
   else
     caixa_abre
     caixa_txt "${BOLD}DNS DA HOME NA MÃO${C0}"
@@ -1437,7 +1487,7 @@ services:
         # enquanto resolvedores do LE viam o IP antigo). Precisa do token CF, que ja temos.
         - "traefik.http.routers.home.rule=Host(\`${BASE_DOMAIN}\`) || Host(\`www.${BASE_DOMAIN}\`)"
         - traefik.http.routers.home.entrypoints=websecure
-        - traefik.http.routers.home.tls.certresolver=ledns
+        - traefik.http.routers.home.tls.certresolver=$(cert_resolver_padrao)
         - traefik.http.services.home.loadbalancer.server.port=80
 networks:
   web:
@@ -1479,6 +1529,10 @@ instalar_claude_chat(){
     $CURL "${RAW_BASE}/apps/claude-chat/${f}" -o "${D}/opt/claude-chat/${f}" 2>/dev/null || chat_ok=0
   done
   $CURL "${RAW_BASE}/apps/claude-chat/public/index.html" -o "${D}/opt/claude-chat/public/index.html" 2>/dev/null || chat_ok=0
+  # tudo que o Dockerfile copia tem que ter chegado (a lista de download é manual — já quebrou)
+  for _c in $(grep -oE '^COPY +[^ ]+' "${D}/opt/claude-chat/Dockerfile" 2>/dev/null | awk '{print $2}' | grep -v '^--from'); do
+    [[ -e "${D}/opt/claude-chat/${_c}" ]] || { warn "faltou baixar ${_c} do app claude-chat — pulei; rode de novo"; chat_ok=0; }
+  done
   if [[ $chat_ok -eq 0 ]]; then
     warn "não consegui baixar o app do chat — pulei; rode o mesmo comando de novo pra tentar"
     return 0
@@ -1560,6 +1614,10 @@ instalar_wa_bot(){
     $CURL "${RAW_BASE}/apps/wa-bot/${f}" -o "${D}/opt/wa-bot/${f}" 2>/dev/null || bot_ok=0
   done
   $CURL "${RAW_BASE}/apps/wa-bot/lib/wa.js" -o "${D}/opt/wa-bot/lib/wa.js" 2>/dev/null || bot_ok=0
+  # tudo que o Dockerfile copia tem que ter chegado (a lista de download é manual — já quebrou)
+  for _c in $(grep -oE '^COPY +[^ ]+' "${D}/opt/wa-bot/Dockerfile" 2>/dev/null | awk '{print $2}' | grep -v '^--from'); do
+    [[ -e "${D}/opt/wa-bot/${_c}" ]] || { warn "faltou baixar ${_c} do app wa-bot — pulei; rode de novo"; bot_ok=0; }
+  done
   if [[ $bot_ok -eq 0 ]]; then
     warn "não consegui baixar o bot — pulei; rode o mesmo comando de novo"
     return 0
@@ -1600,7 +1658,7 @@ services:
         # webhook PÚBLICO (só o path /webhook) — a Ryze precisa POSTar aqui
         - "traefik.http.routers.wabot-hook.rule=Host(\`bot.${BASE_DOMAIN}\`) && PathPrefix(\`/webhook\`)"
         - traefik.http.routers.wabot-hook.entrypoints=websecure
-        - traefik.http.routers.wabot-hook.tls.certresolver=ledns
+        - traefik.http.routers.wabot-hook.tls.certresolver=$(cert_resolver_padrao)
         - traefik.http.routers.wabot-hook.service=wabot
         # pareamento/admin — SÓ pela tailnet
         - "traefik.http.routers.wabot-admin.rule=Host(\`bot-admin.${BASE_DOMAIN}\`)"
@@ -1714,7 +1772,7 @@ antes de criar qualquer coisa.
   Motobase; cada projeto recebe sua própria stack, domínio e backup sem reinstalar esta base.
 - Gestão SÓ-TAILNET: Portainer :9000${QUER_MOLT:+, moltbot :18789} (lockdown na chain DOCKER-USER + unit
   gestao-lockdown; porta publicada pelo Docker ignora ufw). Rota /admin da app: middleware
-  \`tailnet-only\` + priority 2000 (exemplo comentado no app.yml).
+  \`tailnet-only@file\` + priority 2000 (exemplo comentado no app.yml).
 - Backup: pg_dump diário 03:10 → /var/backups/${SLUG} (retenção 14d). Offsite: guard
   (bash <(curl -fsSL https://get.motobot.com.br/guard)).
 
@@ -1870,7 +1928,7 @@ prova_real(){
     if portainer_login_ok "${PORTAINER_ADMIN_PASSWORD:-}" && [[ "$nport" == "1" ]]; then
       ok "Portainer: login admin ${BOLD}OK${C0} ${DIM}(1 container, environment conectado)${C0}"
     else
-      warn "Portainer: login do admin ${BOLD}FALHOU${C0} ${DIM}(containers: ${nport})${C0}"
+      warn "Portainer: login do admin ${BOLD}FALHOU${C0} ${DIM}(containers: ${nport})${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
       sub "rode o mesmo comando de novo — ele refaz o Portainer limpo e verifica"
     fi
   fi
@@ -1878,16 +1936,16 @@ prova_real(){
     # shellcheck disable=SC1091
     source /etc/motobase/beszel-admin.env
     local btok; btok=$(curl -s -m 6 -X POST -H 'content-type: application/json' \
-      -d "{\"identity\":\"${BESZEL_ADMIN_EMAIL:-}\",\"password\":\"${BESZEL_ADMIN_PASSWORD:-}\"}" \
+      -d "$(jq -nc --arg i "${BESZEL_ADMIN_EMAIL:-}" --arg p "${BESZEL_ADMIN_PASSWORD:-}" '{identity:$i,password:$p}')" \
       "http://127.0.0.1:8090/api/collections/users/auth-with-password" 2>/dev/null | jq -r '.token // empty' 2>/dev/null || true)
     if [[ -n "$btok" ]]; then ok "Beszel: login admin ${BOLD}OK${C0}"
-    else warn "Beszel: login do admin ${BOLD}FALHOU${C0}"; sub "rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"; fi
+    else warn "Beszel: login do admin ${BOLD}FALHOU${C0}"; sub "rode: bash <(curl -fsSL https://get.motobot.com.br) --repair-beszel"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); fi
   fi
   for s in $esperados; do
     rep=$(docker service ls --format '{{.Name}} {{.Replicas}}' 2>/dev/null | awk -v s="$s" '$1==s{print $2}')
     have="${rep%%/*}"; want="${rep##*/}"; want="${want%% *}"
     if [[ -n "$rep" && "$have" == "$want" && "$have" != "0" ]]; then ok "${s} ${DIM}${rep}${C0}"
-    else warn "${s} ainda não está de pé ${DIM}(${rep:-não existe})${C0}"; sub "investigar: docker service ps ${s} --no-trunc"
+    else warn "${s} ainda não está de pé ${DIM}(${rep:-não existe})${C0}"; sub "$(docker service ps "$s" --no-trunc --format '{{.Error}}' 2>/dev/null | grep -v '^$' | head -1 || echo "investigar: docker service ps ${s} --no-trunc")"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
     fi
   done
   # banco responde e (se semente) tabelas existem
@@ -1899,7 +1957,7 @@ prova_real(){
     else ok "Banco respondendo ${DIM}schema virgem, como planejado${C0}"
     fi
   else
-    warn "banco não respondeu ao teste"; sub "investigar: docker service ps ${SLUG}_postgres"
+    warn "banco não respondeu ao teste"; sub "investigar: docker service ps ${SLUG}_postgres"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
   fi
   command -v claude >/dev/null && ok "Claude Code no PATH" || warn "Claude Code não encontrado no PATH"
 
@@ -1919,8 +1977,24 @@ prova_real(){
   if docker service inspect wabot_wabot >/dev/null 2>&1; then
     local pc; pc=$(_smoke_hit "bot-admin.${BASE_DOMAIN}" "/")
     [[ "$pc" == 200 ]] && ok "Pareamento do bot responde ${DIM}(HTTP $pc)${C0}" || { warn "Pareamento do bot NÃO responde ${DIM}(HTTP $pc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
-    local wc; wc=$(_smoke_hit "bot.${BASE_DOMAIN}" "/webhook/wa")
-    [[ "$wc" != 000 && "$wc" != 404 ]] && ok "Webhook do bot roteado ${DIM}(HTTP $wc)${C0}" || { warn "Webhook do bot NÃO roteado ${DIM}(HTTP $wc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+    # o webhook só tem POST — GET dava 404 e o resumo NUNCA dizia 100% com o bot instalado
+    local wc; wc=$(curl -sk -m 8 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' -H "Host: bot.${BASE_DOMAIN}" https://127.0.0.1/webhook/wa 2>/dev/null || echo 000)
+    [[ "$wc" =~ ^(200|401|403)$ ]] && ok "Webhook do bot roteado ${DIM}(HTTP $wc · token protege)${C0}" || { warn "Webhook do bot NÃO roteado ${DIM}(HTTP $wc)${C0}"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); }
+  fi
+  # CERTIFICADO VÁLIDO (não só "responde"): --resolve manda SNI certo e SEM -k o curl valida
+  # cadeia+hostname. Emissão leva 20-90s; espera até 2 min. Sem re-emitir em loop (LE limita
+  # 5 falhas/hora por nome). Falha aqui conta como pendência.
+  _cert_ok(){ [[ "$(curl -sS -m 8 -o /dev/null -w '%{http_code}' --resolve "$1:443:127.0.0.1" "https://$1/" 2>/dev/null)" =~ ^[1-5][0-9][0-9]$ ]]; }
+  if [[ -n "${BASE_DOMAIN:-}" ]]; then
+    local _h _i _hosts="$BASE_DOMAIN"
+    docker service inspect chat_chat >/dev/null 2>&1 && _hosts="$_hosts chat.${BASE_DOMAIN}"
+    docker service inspect wabot_wabot >/dev/null 2>&1 && _hosts="$_hosts bot.${BASE_DOMAIN} bot-admin.${BASE_DOMAIN}"
+    info "conferindo certificados HTTPS (emissão leva até 2 min)…"
+    for _h in $_hosts; do
+      _i=0; until _cert_ok "$_h" || [[ $_i -ge 24 ]]; do _i=$((_i+1)); sleep 5; done
+      if _cert_ok "$_h"; then ok "HTTPS válido em ${_h}"
+      else warn "HTTPS de ${_h} ainda é o cert padrão do Traefik ${DIM}(DNS propagando? delegação dupla?)${C0}"; sub "veja: docker service logs traefik_traefik 2>&1 | grep -iE 'acme|resolver' | tail -5"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); fi
+    done
   fi
   if [[ "$SMOKE_FALHAS" -eq 0 ]]; then ok "${BOLD}Smoke de ponta a ponta: tudo respondeu${C0}"
   else warn "${BOLD}Smoke: ${SMOKE_FALHAS} verificação(ões) falharam${C0} — o resumo NÃO vai dizer 100%"; fi
@@ -1934,8 +2008,10 @@ gerar_acessos_txt(){
   [[ "$DRY" == "--dry-run" ]] && return 0
   local f="${D}/etc/motobase/acessos.txt"; mkdir -p "${D}/etc/motobase"
   local chat_on="" bot_on=""
-  [[ "${CLTOK:-}" == sk-ant-oat* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && chat_on=1
-  [[ -n "${RYZETOK:-}" && "${OAKEY:-}" == sk-* && -n "${BASE_DOMAIN:-}" && -n "${CFTOK:-}" && -n "${TSIP:-}" ]] && bot_on=1
+  # lista só o que EXISTE de verdade (build/deploy que falhou não vira link morto)
+  docker service inspect chat_chat  >/dev/null 2>&1 && chat_on=1
+  docker service inspect wabot_wabot >/dev/null 2>&1 && bot_on=1
+  local tg_user=""; [[ -n "${TGTOK:-}" ]] && tg_user=$(curl -s -m 6 "https://api.telegram.org/bot${TGTOK}/getMe" 2>/dev/null | grep -oP '"username":"\K[^"]*' || true)
   {
     echo "ACESSOS — ${PROJ_NAME}"
     echo
@@ -1954,6 +2030,7 @@ gerar_acessos_txt(){
       source "${D}/etc/motobase/beszel-admin.env"; printf "  Beszel:    e-mail '%s'\n" "${BESZEL_ADMIN_EMAIL:-}"; }
     [[ -n "$bot_on" ]] && echo "  Bot: pareie escaneando o QR (nao tem senha)"
     echo
+    [[ -n "$tg_user" ]] && printf 'ALERTAS: mande /start pra t.me/%s uma vez — o watchdog avisa ali quando algo cair.\n' "$tg_user"
     echo "Dica: se um endereco der 'DNS nao encontrado', espere 1-2 min (propagacao) e recarregue."
   } > "$f"
   chmod 600 "$f" 2>/dev/null || true
@@ -1970,7 +2047,8 @@ resumo(){
     say "  ${AMB}$(regua $LARGURA)${C0}"
     say "  ${AMB}${BOLD}  ${PROJ_NAME^^} INSTALADO — ${SMOKE_FALHAS} PENDÊNCIA(S) A CONFERIR${C0}"
     say "  ${AMB}$(regua $LARGURA)${C0}"
-    say "     ${DIM}veja os ▲ acima. rode ${BOLD}motobase reconciliar${C0}${DIM} (corrige DNS/IP) e depois recarregue.${C0}"
+    say "     ${DIM}veja os ▲ acima. Rode o MESMO comando de novo: ele reaproveita tudo e refaz só o que falhou.${C0}"
+    say "     ${DIM}se for DNS/IP (site no lugar errado): ${BOLD}motobase reconciliar${C0}${DIM}. Certificado: espere até 10 min.${C0}"
   fi
   say ""
   say "     ${DIM}domínio base ·${C0} ${BOLD}${BASE_DOMAIN}${C0}"
@@ -1988,7 +2066,16 @@ resumo(){
     while IFS= read -r _l; do say "     ${_l}"; done < "${D}/etc/motobase/acessos.txt"
   fi
   say ""
-  say "       ${DIM}└ senhas: ${BOLD}motobase acessos${C0}${DIM} · isto tudo de novo a qualquer hora${C0}"
+  # as SENHAS na tela (terminal do root, local): o aluno não precisa rodar nada pra logar
+  if [[ "$DRY" != "--dry-run" ]]; then
+    local _pp="" _be="" _bp=""
+    [[ -r /etc/motobase/portainer-admin.env ]] && _pp=$(sed -n 's/^PORTAINER_ADMIN_PASSWORD=//p' /etc/motobase/portainer-admin.env | head -1 | sed "s/^'//;s/'$//")
+    [[ -r /etc/motobase/beszel-admin.env ]] && { _be=$(sed -n 's/^BESZEL_ADMIN_EMAIL=//p' /etc/motobase/beszel-admin.env | head -1); _bp=$(sed -n 's/^BESZEL_ADMIN_PASSWORD=//p' /etc/motobase/beszel-admin.env | head -1 | sed "s/^'//;s/'$//"); }
+    say "     ${BOLD}SENHAS${C0} ${DIM}(guarde num gerenciador de senhas)${C0}"
+    [[ -n "$_pp" ]] && say "       Portainer  →  usuário ${BOLD}admin${C0}  ·  senha ${BOLD}${_pp}${C0}"
+    [[ -n "$_bp" ]] && say "       Beszel     →  e-mail ${BOLD}${_be}${C0}  ·  senha ${BOLD}${_bp}${C0}"
+  fi
+  say "       ${DIM}└ isto tudo de novo a qualquer hora: ${BOLD}motobase acessos${C0}"
   say ""
   say "  ${CHIP} PRÓXIMO PASSO ${C0}"
   say ""
@@ -2019,6 +2106,12 @@ case "${1:-ajuda}" in
     ;;
   chat)
     exec bash <(curl -fsSL https://get.motobot.com.br) --repair-chat
+    ;;
+  bot)
+    exec bash <(curl -fsSL https://get.motobot.com.br) --repair-bot
+    ;;
+  alertas)
+    exec bash <(curl -fsSL https://get.motobot.com.br) --repair-watchdog
     ;;
   acessos)
     [[ -r /etc/motobase/acessos.txt ]] && { cat /etc/motobase/acessos.txt; echo; echo "─── SENHAS ───"; }
@@ -2103,7 +2196,11 @@ UNIT
     cat <<'HELP'
 Motobase — atalhos de acesso
 
-  motobase acessos           Mostra usuário e senha do painel Beszel
+  motobase acessos           Todos os links + senhas (Portainer e Beszel)
+  motobase reconciliar       Corrige o DNS pro IP atual desta VPS (troca de IP)
+  motobase chat              Adiciona/renova o chat Claude (cola o setup-token do Max)
+  motobase bot               Adiciona/renova o bot de WhatsApp (token Ryze)
+  motobase alertas           Ativa os alertas no Telegram (token do BotFather)
   motobase preparar-ssh      Cria o usuário seguro mbadmin a partir da sua chave SSH
   motobase blindar-ssh       Desliga senha/root e libera SSH somente pela Tailnet (após testar mbadmin)
 HELP
@@ -2118,7 +2215,8 @@ EOF
 }
 
 registrar_base(){
-  [[ "$DRY" == "--dry-run" || -z "$BASE_ONLY" ]] && return 0
+  [[ "$DRY" == "--dry-run" ]] && return 0
+  [[ -z "$BASE_ONLY" ]] && { motobase_helpers; return 0; }
   mkdir -p /etc/motobase /opt/projetos
   {
     printf 'BASE_NAME=%q\n' "$PROJ_NAME"
@@ -2128,7 +2226,7 @@ registrar_base(){
     printf 'TAILSCALE_IP=%q\n' "${TSIP:-}"
     printf 'PORTAINER_URL=%q\n' "${PORTAINER_URL:-http://${TSIP:-}:9000}"
     printf 'BESZEL_URL=%q\n' "${BESZEL_URL:-http://${TSIP:-}:8090}"
-    printf 'CERT_RESOLVER=%q\n' "le"
+    printf 'CERT_RESOLVER=%q\n' "$(cert_resolver_padrao)"
     printf 'INSTALLED_AT=%q\n' "$(date -Iseconds)"
   } > /etc/motobase/base.env
   chmod 600 /etc/motobase/base.env
@@ -2156,8 +2254,8 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   # shellcheck disable=SC1091
   source /etc/motobase/base.env
   PROJ_NAME="${BASE_NAME:-}"; SLUG="${BASE_SLUG:-}"; BASE_DOMAIN="${BASE_DOMAIN:-}"
-  TSIP="${TAILSCALE_IP:-$(tailscale ip -4 2>/dev/null | head -1 || true)}"
-  IP=$(curl -fsS -4 --max-time 8 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true); TSIP="${TSIP:-${TAILSCALE_IP:-}}"
+  IP=$(ip_publico)
   CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
   say ""; say "  ${CHIP} ADICIONAR O CHAT ${C0} ${DIM}liga o chat web no seu plano Max${C0}"; say ""
   sub "no SEU computador rode ${BOLD}claude setup-token${C0} e cole o token FINAL (sk-ant-oat…)"
@@ -2166,8 +2264,66 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   [[ "$CLTOK" == sk-ant-oat* ]] || die "Isso não é um setup-token (tem que começar com sk-ant-oat). Gere com 'claude setup-token'."
   [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o chat precisa dos três."
   cred(){ :; }
+  # token NOVO tem que valer: rotaciona o secret (stack rm → secret rm → recria no instalar)
+  if docker secret inspect claude_oauth_token >/dev/null 2>&1; then
+    docker stack rm chat >/dev/null 2>&1 || true
+    for _i in $(seq 1 20); do docker ps -a --filter name=chat_chat -q | grep -q . || break; sleep 2; done
+    docker secret rm claude_oauth_token >/dev/null 2>&1 || true
+  fi
   instalar_claude_chat
+  # o Claude Code do terminal da VPS também passa a usar este token
+  mkdir -p /etc/profile.d; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLTOK" > /etc/profile.d/claude-cred.sh; chmod 600 /etc/profile.d/claude-cred.sh
+  gerar_acessos_txt
   say ""; ok "Pronto. Abra ${BOLD}https://chat.${BASE_DOMAIN}${C0} com o Tailscale ligado."
+  sub "o 'claude' no terminal desta VPS também já está autenticado com este token (novo login: sudo -i)"
+  exit 0
+fi
+
+if [[ -n "$REPAIR_BOT" ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  [[ -r /etc/motobase/base.env ]] || die "Sem /etc/motobase/base.env — a fundação não terminou. Rode o instalador."
+  # shellcheck disable=SC1091
+  source /etc/motobase/base.env
+  PROJ_NAME="${BASE_NAME:-}"; SLUG="${BASE_SLUG:-}"; BASE_DOMAIN="${BASE_DOMAIN:-}"
+  TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true); TSIP="${TSIP:-${TAILSCALE_IP:-}}"
+  IP=$(ip_publico)
+  CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
+  say ""; say "  ${CHIP} ADICIONAR O BOT DE WHATSAPP ${C0} ${DIM}RyzeAPI + OpenAI, pareamento pela tailnet${C0}"; say ""
+  link "https://ryzeapi.cloud"
+  ask_tok RYZETOK "Token da conta Ryze" '^.{16,}$' "token da conta Ryze"
+  [[ -n "$RYZETOK" ]] || die "Sem o token Ryze não dá pra subir o bot."
+  if docker secret inspect openai_api_key >/dev/null 2>&1; then OAKEY="sk-ja-existe"; else
+    link "https://platform.openai.com/api-keys"; ask_tok OAKEY "Chave da OpenAI (cérebro do bot)" '^sk-' "sk-proj-…"
+    [[ "$OAKEY" == sk-* ]] || die "Sem a chave OpenAI não dá pra subir o bot."
+  fi
+  [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o bot precisa dos três."
+  cred(){ :; }
+  if docker secret inspect ryze_account_token >/dev/null 2>&1; then
+    docker stack rm wabot >/dev/null 2>&1 || true
+    for _i in $(seq 1 20); do docker ps -a --filter name=wabot_wabot -q | grep -q . || break; sleep 2; done
+    docker secret rm ryze_account_token >/dev/null 2>&1 || true
+  fi
+  instalar_wa_bot
+  gerar_acessos_txt
+  say ""; ok "Pronto. Abra ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} com o Tailscale ligado e escaneie o QR."
+  exit 0
+fi
+
+if [[ -n "$REPAIR_WATCHDOG" ]]; then
+  [[ $EUID -eq 0 ]] || die "Rode como root: sudo -i"
+  [[ -r /etc/motobase/base.env ]] || die "Sem /etc/motobase/base.env — a fundação não terminou."
+  # shellcheck disable=SC1091
+  source /etc/motobase/base.env
+  PROJ_NAME="${BASE_NAME:-}"; SLUG="${BASE_SLUG:-}"; BASE_DOMAIN="${BASE_DOMAIN:-}"
+  say ""; say "  ${CHIP} ATIVAR ALERTAS NO TELEGRAM ${C0} ${DIM}o watchdog avisa quando algo cair${C0}"; say ""
+  link "https://t.me/BotFather"
+  ask_tok TGTOK "Token do bot Telegram" '^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$' "1234567890:AAE…"
+  [[ -n "$TGTOK" ]] || die "Sem o token do bot não dá pra ativar os alertas."
+  OAKEY=""; [[ -r /run/secrets/openai_api_key ]] && OAKEY="$(</run/secrets/openai_api_key)"
+  cred(){ :; }
+  instalar_watchdog
+  gerar_acessos_txt
+  say ""; ok "Alertas ativados. Mande ${BOLD}/start${C0} pro seu bot no Telegram uma vez."
   exit 0
 fi
 
@@ -2182,13 +2338,14 @@ if [[ -n "$REPAIR_BESZEL" ]]; then
     # A instalação pode ter parado antes de registrar o estado final.
     SLUG=$(docker service ls --format '{{.Name}}' 2>/dev/null | sed -n 's/_postgres$//p' | head -1 || true)
     [[ -n "$SLUG" ]] || die "Não encontrei a base instalada para reparar o Beszel."
-    PROJ_NAME="$SLUG"; APP_DOMAIN=""; LE_EMAIL=""
+    PROJ_NAME="$SLUG"; APP_DOMAIN=""
+    LE_EMAIL=$(sed -n 's/.*certificatesresolvers\.le\.acme\.email=//p' /opt/traefik/stack.yml 2>/dev/null | head -1 || true)
     TSIP=$(tailscale ip -4 2>/dev/null | head -1 || true)
   fi
   PORTAINER_URL="${PORTAINER_URL:-http://${TSIP}:9000}"
   BESZEL_URL="${BESZEL_URL:-http://${TSIP}:8090}"
   cred(){ :; }
-  beszel_stack
+  beszel_stack || true
   motobase_helpers
   exit 0
 fi
