@@ -526,6 +526,8 @@ $('#btnMaster').onclick=()=>{ masterAberto()?confirmarFecharMaster():abrirMaster
 
 async function enviar(){
   const texto=input.value.trim(); if((!texto&&!anexos.length)||enviando) return;
+  // "liberar master" digitado não é comando pro Claude: é o botão da barra. Abre o modal direto.
+  if(/^(liberar|abrir|ativar|modo)\s*(o\s+)?(modo\s+)?master$/i.test(texto) && !$('#btnMaster').hidden){ input.value=''; autosize(); atualizarBotao(); abrirMaster(); return; }
   if(!convAtual){ const id=await novaConversa('assistente'); if(!id) return; }
   enviando=true; atualizarBotao();
   const meusAnexos=anexos.slice(); const metaChips=meusAnexos.map(a=>({name:a.name,kind:a.kind}));

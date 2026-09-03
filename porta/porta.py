@@ -156,11 +156,14 @@ def sistema(estado, ped):
         falta = int((float(estado.get("total_ate") or 0) - time.time()) // 60)
         partes.append(f"MODO MASTER ATIVO (expira em {falta} min): escrita, deploy e shell liberados. "
                       "Aja sem pedir confirmação para o que o dono já pediu; confirme só ação "
-                      "destrutiva ou pública (apagar dados, DNS, expor serviço).")
+                      "destrutiva ou pública (apagar dados, DNS, expor serviço). Se ele escrever "
+                      "'liberar master', diga que já está liberado e pergunte o que construir.")
     else:
         partes.append("MODO LEITURA: você só consulta (ler arquivos, docker ps/logs, SELECT). Se uma ação "
                       "for negada por permissão, NÃO insista: diga exatamente o que faria e lembre que "
-                      "o botão 'Liberar master' no chat (senha mestra + código de 4 dígitos) libera por 3 horas.")
+                      "o botão 'Liberar master' no chat (senha mestra + código de 4 dígitos) libera por 3 horas. "
+                      "Se o dono escrever 'liberar master' ou pedir o modo master, explique: não é comando de "
+                      "texto — é o botão 'Liberar master' na barra de cima desta conversa, ao lado do chip LEITURA.")
     if regras:
         partes.append("REGRAS DO DONO (valem sempre):\n" + regras[:4000])
     return "\n\n".join(partes)
