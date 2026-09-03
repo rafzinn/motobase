@@ -2485,7 +2485,12 @@ if [[ -n "$REPAIR_BOT" ]]; then
   CFTOK=""; [[ -r /etc/motobase/cloudflare.token ]] && CFTOK="$(</etc/motobase/cloudflare.token)"
   say ""; say "  ${CHIP} ADICIONAR O BOT DE WHATSAPP ${C0} ${DIM}RyzeAPI + OpenAI, pareamento pela tailnet${C0}"; say ""
   link "https://ryzeapi.cloud"
+  # token já guardado (secret do Swarm, lido do container do bot que está rodando): Enter mantém
+  _ryze_atual=""; _bcid=$(docker ps -q -f name=wabot_wabot 2>/dev/null | head -1 || true)
+  [[ -n "$_bcid" ]] && _ryze_atual=$(docker exec "$_bcid" cat /run/secrets/ryze_account_token 2>/dev/null | tr -d '[:space:]' || true)
+  [[ -n "$_ryze_atual" ]] && sub "já existe um token Ryze nesta VPS — ${BOLD}Enter mantém o atual${C0}"
   ask_tok RYZETOK "Token da conta Ryze" '^.{16,}$' "token da conta Ryze"
+  _ryze_novo=1; [[ -z "$RYZETOK" && -n "$_ryze_atual" ]] && { RYZETOK="$_ryze_atual"; _ryze_novo=""; ok "mantendo o token atual"; }
   [[ -n "$RYZETOK" ]] || die "Sem o token Ryze não dá pra subir o bot."
   if docker secret inspect openai_api_key >/dev/null 2>&1; then OAKEY="sk-ja-existe"; else
     link "https://platform.openai.com/api-keys"; ask_tok OAKEY "Chave da OpenAI (cérebro do bot)" '^sk-' "sk-proj-…"
@@ -2493,12 +2498,14 @@ if [[ -n "$REPAIR_BOT" ]]; then
   fi
   [[ -n "$CFTOK" && -n "$BASE_DOMAIN" && -n "$TSIP" ]] || die "Faltam domínio base, token Cloudflare salvo ou tailnet — o bot precisa dos três."
   cred(){ :; }
-  if docker secret inspect ryze_account_token >/dev/null 2>&1; then
+  if [[ -n "$_ryze_novo" ]] && docker secret inspect ryze_account_token >/dev/null 2>&1; then
     docker stack rm wabot >/dev/null 2>&1 || true
     for _i in $(seq 1 20); do docker ps -a --filter name=wabot_wabot -q | grep -q . || break; sleep 2; done
     docker secret rm ryze_account_token >/dev/null 2>&1 || true
   fi
   instalar_wa_bot
+  # código novo do bot (retry do provisionamento) precisa virar container novo
+  docker service update --force wabot_wabot >/dev/null 2>&1 || true
   motobase_helpers
   gerar_acessos_txt
   say ""; ok "Pronto. Abra ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} com o Tailscale ligado e escaneie o QR."
