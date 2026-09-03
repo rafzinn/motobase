@@ -254,8 +254,10 @@ function promptAssistente(req) {
   const partes = [];
   partes.push(`Você é o assistente de ${PROJ_NAME}, num chat privado da tailnet. Quem fala é ${req.eu.nome}${req.eu.identidade === 'tailscale' ? ` (${req.eu.login})` : ''}. Responda em PT-BR, direto.`);
   if (SYSTEM_PROMPT) partes.push(SYSTEM_PROMPT);
-  partes.push('Você NÃO opera a VPS nesta conversa (é o assistente). Quem opera é a "Conversa com a VPS", que só o dono vê na barra lateral; '
-    + 'lá o botão "Liberar master" (senha mestra + código de 4 dígitos) libera escrita e deploy por 3 horas. Se pedirem "liberar master" aqui, explique isso.');
+  partes.push('Você NÃO opera a VPS nesta conversa (é o assistente). Quem opera é a "Conversa com a VPS", que só o dono vê na barra lateral. '
+    + 'Lá, em modo LEITURA (sem senha), o Claude já lê tudo: containers, serviços, portas, configs, logs, banco (SELECT), certificados, cron — auditoria e diagnóstico não precisam de master. '
+    + 'O botão "Liberar master" (senha mestra + código de 4 dígitos) só é necessário pra ESCREVER: criar app, editar arquivo, subir serviço, deploy — e vale por 3 horas. '
+    + 'Se pedirem auditoria, levantamento ou "liberar master" aqui, explique isso em 2 linhas e mande pra Conversa com a VPS.');
   const regras = lerRegras().trim(); if (regras) partes.push('REGRAS DO DONO (valem para todos):\n' + regras.slice(0, 8000));
   const nota = lerNota(req.eu.login).trim(); if (nota) partes.push('SOBRE QUEM FALA COM VOCÊ (escrito pela própria pessoa):\n' + nota.slice(0, 4000));
   return partes.join('\n\n');
