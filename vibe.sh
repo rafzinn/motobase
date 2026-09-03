@@ -2418,6 +2418,12 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   say ""; say "  ${CHIP} ADICIONAR O CHAT ${C0} ${DIM}liga o chat web no seu plano Max${C0}"; say ""
   # token já guardado na VPS (do instalador): Enter mantém — não precisa gerar outro no PC
   _tok_atual=""; _tok_atual=$(bash -c 'source /etc/profile.d/claude-cred.sh 2>/dev/null; printf %s "${CLAUDE_CODE_OAUTH_TOKEN:-}"' 2>/dev/null || true)
+  # instalação que recebeu o token só pelo secret (reparo antigo): o container do chat que está
+  # rodando tem o valor em /run/secrets — recupera de lá, sem pedir pro dono gerar outro
+  if [[ "$_tok_atual" != sk-ant-oat* ]]; then
+    _cid=$(docker ps -q -f name=chat_chat 2>/dev/null | head -1 || true)
+    [[ -n "$_cid" ]] && _tok_atual=$(docker exec "$_cid" cat /run/secrets/claude_oauth_token 2>/dev/null | tr -d '[:space:]' || true)
+  fi
   if [[ "$_tok_atual" == sk-ant-oat* ]]; then
     sub "já existe um setup-token nesta VPS — ${BOLD}Enter mantém o atual${C0}; cole um novo só se quiser trocar"
   else
