@@ -2462,6 +2462,13 @@ if [[ -n "$REPAIR_CHAT" ]]; then
   gerar_acessos_txt
   say ""; ok "Pronto. Abra ${BOLD}https://chat.${BASE_DOMAIN}${C0} com o Tailscale ligado."
   sub "o 'claude' no terminal desta VPS também já está autenticado com este token (novo login: sudo -i)"
+  # senha mestra gerada agora: mostrar UMA vez (não fica gravada em texto em lugar nenhum)
+  if [[ -n "${MASTER_PW_GERADA:-}" ]]; then
+    say ""; say "     ${BOLD}SENHA MESTRA do modo master${C0} ${DIM}(anote agora; trocar depois: motobase senha)${C0}"
+    say "       ${BOLD}${MASTER_PW}${C0}"
+  elif [[ -n "${MASTER_PW:-}" ]]; then
+    sub "senha mestra: a que você definiu agora (trocar: motobase senha)"
+  fi
   exit 0
 fi
 
