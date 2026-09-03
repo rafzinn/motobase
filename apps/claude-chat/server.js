@@ -130,7 +130,9 @@ app.get('/api/conversations', (req, res) => {
   res.json(db.prepare('SELECT id,title,updated_at,mode FROM conversations WHERE user_login=? ORDER BY updated_at DESC').all(req.eu.login));
 });
 app.post('/api/conversations', (req, res) => {
-  const mode = (req.body && req.body.mode) === 'vps' ? 'vps' : 'assistente';
+  // sem modo explícito: o dono cai na conversa com a VPS (padrão dele); os outros, no assistente
+  const pedido = (req.body && req.body.mode) || '';
+  const mode = pedido === 'vps' ? 'vps' : (pedido === 'assistente' ? 'assistente' : ((req.eu.dono && porta.disponivel()) ? 'vps' : 'assistente'));
   if (mode === 'vps' && !req.eu.dono) return res.status(403).json({ error: 'a conversa com a VPS é só do dono' });
   if (mode === 'vps' && !porta.disponivel()) return res.status(503).json({ error: 'a porta da VPS não está instalada (rode: motobase chat)' });
   const t = now();
@@ -257,7 +259,8 @@ function promptAssistente(req) {
   partes.push('Você NÃO opera a VPS nesta conversa (é o assistente). Quem opera é a "Conversa com a VPS", que só o dono vê na barra lateral. '
     + 'Lá, em modo LEITURA (sem senha), o Claude já lê tudo: containers, serviços, portas, configs, logs, banco (SELECT), certificados, cron — auditoria e diagnóstico não precisam de master. '
     + 'O botão "Liberar master" (senha mestra + código de 4 dígitos) só é necessário pra ESCREVER: criar app, editar arquivo, subir serviço, deploy — e vale por 3 horas. '
-    + 'Se pedirem auditoria, levantamento ou "liberar master" aqui, explique isso em 2 linhas e mande pra Conversa com a VPS.');
+    + 'Se pedirem auditoria, levantamento ou "liberar master" aqui, explique isso em 2 linhas e mande pra Conversa com a VPS '
+    + '(pro dono, o botão "+ Nova conversa com a VPS" na barra lateral; esta conversa é do tipo "só assistente").');
   const regras = lerRegras().trim(); if (regras) partes.push('REGRAS DO DONO (valem para todos):\n' + regras.slice(0, 8000));
   const nota = lerNota(req.eu.login).trim(); if (nota) partes.push('SOBRE QUEM FALA COM VOCÊ (escrito pela própria pessoa):\n' + nota.slice(0, 4000));
   return partes.join('\n\n');

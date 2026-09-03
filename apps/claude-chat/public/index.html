@@ -224,7 +224,12 @@ function renderMe(){
   const partes=[]; const quem=me.nome||me.login; if(quem) partes.push(quem);
   if(me.identidade==='anonimo') partes.push('tailnet · sem identidade');
   $('#whoami').textContent=partes.join(' · ')||'—';
-  $('#newvps').hidden=!(me.dono&&me.porta);
+  // DONO: toda conversa nova já é com a VPS (leitura livre; "Liberar master" na própria conversa dá o poder
+  // total). O assistente puro vira a opção secundária. Demais pessoas da tailnet: só assistente.
+  const donoVps=!!(me.dono&&me.porta); document.body.dataset.modoPadrao=donoVps?'vps':'assistente';
+  $('#new').textContent=donoVps?'＋ Nova conversa com a VPS':'＋ Nova conversa';
+  $('#newvps').textContent='＋ Só assistente (sem a VPS)';
+  $('#newvps').hidden=!donoVps;
   $('#btnRegras').hidden=false; $('#btnNota').hidden=false;
   $('#btnMaster').hidden=!me.dono;
 }
@@ -518,8 +523,9 @@ function atualizarBotao(){$('#send').disabled=enviando||(!input.value.trim()&&!a
 input.addEventListener('input',()=>{autosize();atualizarBotao();});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();enviar();}});
 $('#send').onclick=enviar;
-$('#new').onclick=()=>novaConversa('assistente');
-$('#newvps').onclick=()=>novaConversa('vps');
+const modoPadrao=()=>document.body.dataset.modoPadrao||'assistente';
+$('#new').onclick=()=>novaConversa(modoPadrao());
+$('#newvps').onclick=()=>novaConversa('assistente');
 $('#btnRegras').onclick=abrirRegras;
 $('#btnNota').onclick=abrirNota;
 $('#btnMaster').onclick=()=>{ masterAberto()?confirmarFecharMaster():abrirMaster(); };
@@ -528,7 +534,7 @@ async function enviar(){
   const texto=input.value.trim(); if((!texto&&!anexos.length)||enviando) return;
   // "liberar master" digitado não é comando pro Claude: é o botão da barra. Abre o modal direto.
   if(/^(liberar|abrir|ativar|modo)\s*(o\s+)?(modo\s+)?master$/i.test(texto) && !$('#btnMaster').hidden){ input.value=''; autosize(); atualizarBotao(); abrirMaster(); return; }
-  if(!convAtual){ const id=await novaConversa('assistente'); if(!id) return; }
+  if(!convAtual){ const id=await novaConversa(modoPadrao()); if(!id) return; }
   enviando=true; atualizarBotao();
   const meusAnexos=anexos.slice(); const metaChips=meusAnexos.map(a=>({name:a.name,kind:a.kind}));
   const txUser=bolha('user',texto); if(metaChips.length){const f=document.createElement('div');f.className='files';chipsAnexos(metaChips,f);txUser.parentElement.append(f);}
