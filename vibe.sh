@@ -334,6 +334,13 @@ perguntar_whatsapp_dono(){
   DONO_WHATSAPP=$(printf '%s' "$DONO_WHATSAPP" | tr -cd '0-9')
   if [[ -n "$DONO_WHATSAPP" && ! "$DONO_WHATSAPP" =~ ^[0-9]{10,15}$ ]]; then warn "número estranho (${DONO_WHATSAPP}) — o código vai por Telegram ou arquivo"; DONO_WHATSAPP=""; fi
   [[ -n "$DONO_WHATSAPP" ]] && ok "código do master vai pro WhatsApp final ${DONO_WHATSAPP: -4}"
+  if [[ -n "$DONO_WHATSAPP" ]]; then
+    sub "o código sai por uma instância Ryze PAREADA. Enter = a do bot desta VPS (${SLUG:-slug}bot, pareia depois no bot-admin);"
+    sub "se sua conta já tem uma instância conectada (ex.: de outro projeto), digite o nome dela pra usar desde já"
+    ask WA_INST "Instância Ryze que envia o código" ""
+    WA_INST=$(printf '%s' "$WA_INST" | tr -cd 'A-Za-z0-9_.-')
+    [[ -n "$WA_INST" ]] && ok "código do master sai pela instância ${WA_INST}"
+  fi
   return 0
 }
 
@@ -1239,8 +1246,6 @@ EOF
 
   beszel_stack || true
   home_stack
-  instalar_claude_chat
-  instalar_wa_bot
 }
 
 # ── Beszel: painel leve de CPU, RAM, disco, rede e containers ─────────────────
@@ -2106,6 +2111,23 @@ prova_real(){
       if systemctl is-active --quiet motobase-porta; then ok "Porta da VPS ativa ${DIM}(conversa com a VPS + modo master)${C0}"
       else warn "Porta da VPS parada"; sub "journalctl -u motobase-porta -n 30"; SMOKE_FALHAS=$((SMOKE_FALHAS+1)); fi
     fi
+    # CANÁRIO da porta: uma pergunta de verdade pro Claude do host (haiku, no plano do dono). É o que
+    # prova token + binário + sessão de ponta a ponta — sem isso o chat "no ar" podia estar surdo.
+    if [[ -x /opt/porta/porta.py ]] && systemctl is-active --quiet motobase-porta; then
+      local _cid _saida _i _txt=""
+      _cid="$(date +%s%N)-canario"; _saida="/opt/porta/saida/${_cid}.jsonl"
+      printf '{"texto":"Responda apenas a palavra OK, nada mais.","origem":"instalador","usuario":"prova real","modelo":"haiku","esforco":"low"}' > "/opt/porta/entrada/${_cid}.json.tmp"
+      mv "/opt/porta/entrada/${_cid}.json.tmp" "/opt/porta/entrada/${_cid}.json"
+      info "porta: perguntando ao Claude do host (até 90 s)…"
+      _i=0; until [[ -f "/opt/porta/saida/${_cid}.fim" || $_i -ge 45 ]]; do _i=$((_i+1)); sleep 2; done
+      [[ -f "$_saida" ]] && _txt=$(grep -o '"t": *"texto", *"v": *"[^"]*"' "$_saida" 2>/dev/null | sed 's/.*"v": *"//;s/"$//' | tr -d '\n' | head -c 80 || true)
+      if [[ "${_txt^^}" == *OK* ]]; then ok "Porta respondeu de verdade ${DIM}(Claude do host: \"${_txt}\")${C0}"
+      else
+        warn "Porta NÃO respondeu ${DIM}($( [[ -f "$_saida" ]] && grep -o '"t": *"erro", *"v": *"[^"]*"' "$_saida" | sed 's/.*"v": *"//;s/"$//' | head -c 160 || echo 'sem saída em 90 s'))${C0}"
+        sub "veja: journalctl -u motobase-porta -n 30 · token do host: /etc/profile.d/claude-cred.sh"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
+      fi
+      rm -f "/opt/porta/entrada/${_cid}.json" "$_saida" "/opt/porta/saida/${_cid}.fim" 2>/dev/null || true
+    fi
     # identidade pelo Tailscale exige o IP real do cliente: o SNAT do tailscaled esconde-o atrás do 172.18.0.1
     if iptables -t nat -S ts-postrouting 2>/dev/null | grep -q MASQUERADE; then
       warn "Tailscale está mascarando o IP dos clientes — o chat não reconhece quem entra"; sub "corrige: tailscale set --snat-subnet-routes=false"; SMOKE_FALHAS=$((SMOKE_FALHAS+1))
@@ -2574,6 +2596,9 @@ dados_stack
 app_secrets
 tailscale_gestao
 claude_code
+# chat + bot vêm DEPOIS do Claude Code: a porta (conversa com a VPS) usa o `claude` do host
+instalar_claude_chat
+instalar_wa_bot
 [[ -z "$BASE_ONLY" ]] && moltbot_stack
 backup_cron
 instalar_watchdog
