@@ -1536,7 +1536,9 @@ HOMEYML
 # arquivo em /opt/porta/entrada; o serviço systemd (root) roda o `claude -p` no host,
 # sessão por conversa, modo LEITURA por padrão e MASTER (senha + código) por 3 h.
 instalar_porta(){
-  command -v claude >/dev/null 2>&1 || { warn "porta pulada — o Claude Code não está instalado no host"; return 0; }
+  if [[ "$DRY" != "--dry-run" ]] && ! command -v claude >/dev/null 2>&1 && [[ ! -x /usr/bin/claude && ! -x /usr/local/bin/claude ]]; then
+    warn "porta pulada — o Claude Code não está instalado no host (npm install -g @anthropic-ai/claude-code; depois: motobase chat)"; return 0
+  fi
   local _f _ok=1
   mkdir -p "${D}/opt/porta/entrada" "${D}/opt/porta/saida" "${D}/opt/porta/uploads"
   for _f in porta.py auth.py senha.py guarda-leitura.py settings-leitura.json motobase-porta.service; do
