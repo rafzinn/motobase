@@ -119,7 +119,8 @@ app.get('/api/me', (req, res) => {
   const ate = porta.disponivel() ? porta.masterAte() : null;
   res.json({
     login: req.eu.login, nome: req.eu.nome, identidade: req.eu.identidade, dono: !!req.eu.dono,
-    porta: porta.disponivel(),
+    ip: req.eu.ip || null, motivo: req.eu.motivo || null, dono_esperado: req.eu.dono_esperado || null,
+    porta: porta.disponivel(), tailscale: identidade.disponivel(),
     master: { aberto: !!ate, ate, tem_senha: auth.temSenha(), bloqueado_seg: auth.bloqueado(), canal: canal2fa.canal() }
   });
 });

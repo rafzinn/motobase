@@ -15,6 +15,7 @@ const SOCK = process.env.TAILSCALE_SOCK || '/var/run/tailscale/tailscaled.sock';
 const OWNER_ENV = (process.env.OWNER_LOGIN || '').trim().toLowerCase();
 const CACHE_MS = 60 * 1000;
 const cache = new Map();          // ip → { t, dados }
+const motivos = new Map();        // ip → por que o whois falhou (diagnóstico em /api/me)
 let donoCache = { t: 0, login: '' };
 
 function disponivel() { try { return fs.existsSync(SOCK); } catch (e) { return false; } }
@@ -43,7 +44,7 @@ async function whois(ip) {
   if (!ip || !disponivel()) return null;
   const c = cache.get(ip);
   if (c && Date.now() - c.t < CACHE_MS) return c.dados;
-  let dados = null;
+  let dados = null, motivo = '';
   try {
     const addr = ip.includes(':') ? `[${ip}]:1` : `${ip}:1`;
     const r = await localapi('/localapi/v0/whois?addr=' + encodeURIComponent(addr));
@@ -51,8 +52,10 @@ async function whois(ip) {
       const j = JSON.parse(r.body);
       const u = j.UserProfile || {}; const n = j.Node || {};
       if (u.LoginName) dados = { login: String(u.LoginName).toLowerCase(), nome: u.DisplayName || u.LoginName, node: n.ComputedName || n.Name || '' };
-    }
-  } catch (e) { dados = null; }
+      else motivo = 'whois sem LoginName';
+    } else motivo = `whois HTTP ${r.status}: ${String(r.body).slice(0, 80)}`;
+  } catch (e) { dados = null; motivo = 'socket do tailscale: ' + e.message; }
+  if (!dados) { motivos.set(ip, motivo); console.warn(`[chat] identidade falhou para ${ip}: ${motivo}`); } else motivos.delete(ip);
   cache.set(ip, { t: Date.now(), dados });
   return dados;
 }
@@ -80,7 +83,8 @@ async function identificar(req) {
   if (w) return { ip, login: w.login, nome: w.nome, node: w.node, identidade: 'tailscale', dono: !!d && w.login === d };
   // sem identidade: todo mundo é "tailnet". Só é dono se o instalador NÃO fixou um
   // dono (senão qualquer anônimo viraria dono) — e mesmo assim o master exige 2FA.
-  return { ip, login: 'tailnet', nome: 'tailnet', node: '', identidade: 'anonimo', dono: !d };
+  const motivo = !disponivel() ? 'socket do tailscale não montado no container' : (motivos.get(ip) || (ip ? 'IP fora da tailnet' : 'sem IP do cliente'));
+  return { ip, login: 'tailnet', nome: 'tailnet', node: '', identidade: 'anonimo', dono: !d, motivo, dono_esperado: d || '' };
 }
 
 module.exports = { identificar, disponivel, clientIp, whois, dono };
