@@ -2441,6 +2441,7 @@ if [[ -n "$REPAIR_CHAT" ]]; then
     docker secret rm claude_oauth_token >/dev/null 2>&1 || true
   fi
   instalar_claude_chat
+  motobase_helpers   # o atalho 'motobase' ganha os subcomandos novos (chat/bot/alertas/senha…)
   # o Claude Code do terminal da VPS também passa a usar este token
   mkdir -p /etc/profile.d; printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLTOK" > /etc/profile.d/claude-cred.sh; chmod 600 /etc/profile.d/claude-cred.sh
   gerar_acessos_txt
@@ -2474,6 +2475,7 @@ if [[ -n "$REPAIR_BOT" ]]; then
     docker secret rm ryze_account_token >/dev/null 2>&1 || true
   fi
   instalar_wa_bot
+  motobase_helpers
   gerar_acessos_txt
   say ""; ok "Pronto. Abra ${BOLD}https://bot-admin.${BASE_DOMAIN}${C0} com o Tailscale ligado e escaneie o QR."
   exit 0
@@ -2492,6 +2494,7 @@ if [[ -n "$REPAIR_WATCHDOG" ]]; then
   OAKEY=""; [[ -r /run/secrets/openai_api_key ]] && OAKEY="$(</run/secrets/openai_api_key)"
   cred(){ :; }
   instalar_watchdog
+  motobase_helpers
   gerar_acessos_txt
   say ""; ok "Alertas ativados. Mande ${BOLD}/start${C0} pro seu bot no Telegram uma vez."
   exit 0
