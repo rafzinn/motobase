@@ -551,6 +551,35 @@ preflight(){
   fi
 }
 
+# Token Cloudflare serve? Vale pelo que importa: enxergar os domínios (zonas) da conta.
+# Aceita os dois tipos de token: de usuário (cfut_, My Profile → API Tokens) e da conta
+# (cfat_, Manage Account → Account API tokens). O token da conta NÃO passa no
+# /user/tokens/verify (ele se verifica em /accounts/{id}/tokens/verify), por isso não
+# usamos só aquele endpoint. A Global API Key (cfk_) não é token: recusa com o motivo.
+# Saída: 0 = serve; CF_TIPO, CF_ZONAS; senão CF_MOTIVO com o porquê.
+cf_token_serve(){
+  local tok="$1" r n
+  CF_TIPO=""; CF_ZONAS=0; CF_MOTIVO=""
+  case "$tok" in
+    cfk_*) CF_MOTIVO="isso é a Global API Key, não um token — crie um token com o modelo 'Edit zone DNS'"; return 1 ;;
+    cfat_*) CF_TIPO="token da conta" ;;
+    *) CF_TIPO="token de usuário" ;;
+  esac
+  r=$(curl -sS --max-time 15 -H "Authorization: Bearer ${tok}" \
+    "https://api.cloudflare.com/client/v4/zones?per_page=50" 2>/dev/null || true)
+  if [[ -z "$r" ]]; then CF_MOTIVO="não consegui falar com a Cloudflare (internet do servidor?)"; return 1; fi
+  if ! grep -q '"success":[[:space:]]*true' <<<"$r"; then
+    CF_MOTIVO="a Cloudflare recusou o token: $(grep -oP '"message":"\K[^"]*' <<<"$r" | head -1)"
+    return 1
+  fi
+  n=$(grep -oP '"name_servers"' <<<"$r" | wc -l)
+  if [[ "$n" -lt 1 ]]; then
+    CF_MOTIVO="o token é válido, mas não enxerga nenhum domínio — em Zone Resources escolha Include → All zones"
+    return 1
+  fi
+  CF_ZONAS="$n"; return 0
+}
+
 cf_dns_record(){
   local record_domain="$1" target_ip="$2" purpose="${3:-DNS only}"
   if [[ "$DRY" == "--dry-run" ]]; then
@@ -626,15 +655,11 @@ questionario(){
   while true; do
     ask_tok CFTOK "Token Cloudflare para editar DNS" '^[A-Za-z0-9_-]{30,60}$' "cfut_…"
     [[ -z "$CFTOK" || "$DRY" == "--dry-run" ]] && break
-    local cf_status
-    cf_status=$(curl -fsS --max-time 10 -H "Authorization: Bearer ${CFTOK}" \
-      https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null \
-      | grep -o '"status":"active"' || true)
-    if [[ -n "$cf_status" ]]; then
-      ok "Token Cloudflare válido e ativo"
+    if cf_token_serve "$CFTOK"; then
+      ok "Token Cloudflare válido — ${CF_TIPO}, enxerga ${CF_ZONAS} domínio(s)"
       break
     fi
-    warn "a Cloudflare não reconheceu esse token como ativo"
+    warn "${CF_MOTIVO:-a Cloudflare não reconheceu esse token}"
     sub "cole novamente; Enter pula e mostra como configurar o DNS manualmente"
   done
 
